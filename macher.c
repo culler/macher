@@ -10,7 +10,7 @@
 #include <mach-o/swap.h>
 #include <mach-o/fat.h>
 #include <mach/mach.h>
-#include "mach_o.h"
+#include "macher.h"
 #define MAJOR(x) ((x >> 16) & 0xff)
 #define MINOR(x) ((x >> 8) & 0xff)
 #define PATCH(x) (x & 0xff)

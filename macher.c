@@ -30,16 +30,18 @@ typedef struct {
     char *mode;
     FILE *mach_o_file;
     int header_size;
+    void *header_data;
     int num_commands;
     unsigned long command_space;
     mach_o_command *commands;
-    char *data_path;
 } mach_o_obj;
 
 static void swap_data_bytes(mach_o_obj *mach_o, mach_o_command *command);
-static void print_command(mach_o_obj *mach_o, mach_o_command *command);
-static void print_segment(mach_o_obj *mach_o, mach_o_command *command);
+static void update_header(mach_o_obj *mach_o, int num_cmds, int size_change);
+static void print_command(mach_o_obj *mach_o, mach_o_command *command, char *arg);
+static void print_segment(mach_o_obj *mach_o, mach_o_command *command, char *arg);
 static void compute_command_space(mach_o_obj *mach_o);
+static void remove_command(mach_o_obj *mach_o, int index);
 static void init_mach_o(mach_o_obj *mach_o, char *path, char *mode);
 static void destroy_mach_o(mach_o_obj *mach_o);
 static void usage();
@@ -97,28 +99,32 @@ static void init_mach_o(mach_o_obj *mach_o, char *path, char *mode) {
      */
     fseek(mach_o->mach_o_file, 0L, SEEK_SET);
     if (mach_o->is_64bit) {
-	struct mach_header_64 header;
+	struct mach_header_64 *header;
 	mach_o->header_size = sizeof(struct mach_header_64);
-	fread(&header, mach_o->header_size, 1, mach_o->mach_o_file);
+	mach_o->header_data = malloc(mach_o->header_size);
+	header = (struct mach_header_64 *) mach_o->header_data;
+	fread(mach_o->header_data, mach_o->header_size, 1, mach_o->mach_o_file);
 	if (mach_o->reverse_bytes) {
-	    swap_mach_header_64(&header, 0);
+	    swap_mach_header_64(header, 0);
 	}
-	mach_o->num_commands = header.ncmds;
+	mach_o->num_commands = header->ncmds;
 	if (mach_o->verbose) {
 	    printf("There are %u bytes being used to store %u load commands.\n",
-		   header.sizeofcmds, header.ncmds);
+		   header->sizeofcmds, header->ncmds);
 	}
     } else {
-	struct mach_header header;
+	struct mach_header *header;
 	mach_o->header_size = sizeof(struct mach_header);
-	fread(&header, mach_o->header_size, 1, mach_o->mach_o_file);
+	mach_o->header_data = malloc(mach_o->header_size);
+	header = (struct mach_header *) mach_o->header_data;
+	fread(mach_o->header_data, mach_o->header_size, 1, mach_o->mach_o_file);
 	if (mach_o->reverse_bytes) {
-	    swap_mach_header(&header, 0);
+	    swap_mach_header(header, 0);
 	}
-	mach_o->num_commands = header.ncmds;
+	mach_o->num_commands = header->ncmds;
 	if (mach_o->verbose) {
 	    printf("There are %u bytes being used to store %u load commands.\n",
-		   header.sizeofcmds, header.ncmds);
+		   header->sizeofcmds, header->ncmds);
 	}
     }
     /*
@@ -153,6 +159,8 @@ static void destroy_mach_o(mach_o_obj *mach_o) {
 	mach_o_command *command = mach_o->commands + i;
 	free(command->data);
     }
+    free(mach_o->header_data);
+    mach_o->header_data = NULL;
     free(mach_o->commands);
     mach_o->commands = NULL;
     fclose(mach_o->mach_o_file);
@@ -200,7 +208,42 @@ static void swap_data_bytes(mach_o_obj *mach_o, mach_o_command *command) {
     }
 }
 
-static void print_command(mach_o_obj *mach_o, mach_o_command *command) {
+static void update_header(mach_o_obj *mach_o, int ncmds, int size_change) {
+    if (mach_o->is_64bit) {
+	struct mach_header_64 *header = (struct mach_header_64 *)
+	    mach_o->header_data;
+	header->ncmds = ncmds;
+	header->sizeofcmds += size_change;
+	fseek(mach_o->mach_o_file, 0, SEEK_SET);
+	if (mach_o->reverse_bytes) {
+	    swap_mach_header_64(header, 0);
+	    fwrite(mach_o->header_data, sizeof(struct mach_header_64), 1,
+		   mach_o->mach_o_file);
+	    swap_mach_header_64(header, 0);
+	} else {
+	    fwrite(mach_o->header_data, sizeof(struct mach_header_64), 1,
+		   mach_o->mach_o_file);
+	}
+    } else {
+	struct mach_header *header = (struct mach_header *)
+	    mach_o->header_data;
+	header->ncmds = ncmds;
+	header->sizeofcmds += size_change;
+	fseek(mach_o->mach_o_file, 0, SEEK_SET);
+	if (mach_o->reverse_bytes) {
+	    swap_mach_header(header, 0);
+	    fwrite(mach_o->header_data, sizeof(struct mach_header), 1,
+		   mach_o->mach_o_file);
+	    swap_mach_header(header, 0);
+	} else {
+	    fwrite(mach_o->header_data, sizeof(struct mach_header), 1,
+		   mach_o->mach_o_file);
+	}
+	    
+    }
+}
+
+static void print_command(mach_o_obj *mach_o, mach_o_command *command, char *arg) {
     int command_id = command->lc.cmd & ~LC_REQ_DYLD;
     switch (command_id) {
     case LC_SEGMENT:
@@ -331,9 +374,29 @@ static void print_command(mach_o_obj *mach_o, mach_o_command *command) {
     }
 }
 
-static void print_segment(mach_o_obj *mach_o, mach_o_command *command) {
+static void remove_command(mach_o_obj *mach_o, int index){
+    mach_o_command *command = mach_o->commands + index;
+    int command_size = command->lc.cmdsize;
+    int tail_size = mach_o->command_space - command->position - command_size;
+    char *buffer = malloc(tail_size);
+    char null = '\0';
+    fseek(mach_o->mach_o_file, command->position + command_size, SEEK_SET);
+    fread(buffer, tail_size, 1, mach_o->mach_o_file);
+    fseek(mach_o->mach_o_file, command->position, SEEK_SET);
+    fwrite(buffer, tail_size, 1, mach_o->mach_o_file);
+    fwrite(&null, 1, command_size, mach_o->mach_o_file);
+    free(command->data);
+    for (int i = index; i < mach_o->num_commands - 1; i++) {
+	mach_o->commands[i] = mach_o->commands[i + 1];
+    }
+    mach_o->num_commands -= 1;
+    mach_o->command_space += command_size;
+    update_header(mach_o, mach_o->num_commands, -command_size);
+}
+
+static void print_segment(mach_o_obj *mach_o, mach_o_command *command, char *arg) {
     if (command->lc.cmd == LC_SEGMENT || command->lc.cmd == LC_SEGMENT_64) {
-	print_command(mach_o, command);
+	print_command(mach_o, command, arg);
     }
 }
 
@@ -385,18 +448,18 @@ static void compute_command_space(mach_o_obj *mach_o) {
     }
 }
 
-/*
- * When appending data we need to change values in two of the load commands but
- * the size of the commands does not change.  So we just overwrite the commands
- * in the file and then append the data.
- */
-void append_data(mach_o_obj *mach_o, mach_o_command *command) {
+void append_data(mach_o_obj *mach_o, mach_o_command *command, char *data_path) {
+    /*
+     * When appending data we need to change values in two of the load commands but
+     * the size of the commands does not change.  So we just overwrite the commands
+     * in the file and then append the data.
+     */
     struct stat st;
     unsigned long data_size;
     FILE *mach_o_file, *data_file;
 
-    if (stat(mach_o->data_path, &st)) {
-	printf("Could not find data file %s.\n", mach_o->data_path);
+    if (stat(data_path, &st)) {
+	printf("Could not find data file %s.\n", data_path);
 	exit(1);
     }
     data_size = st.st_size;
@@ -442,7 +505,7 @@ void append_data(mach_o_obj *mach_o, mach_o_command *command) {
 	    }
 	    fclose(mach_o->mach_o_file);
 	    mach_o->mach_o_file = fopen(mach_o->path, "a");
-	    data_file = fopen(mach_o->data_path, "r");
+	    data_file = fopen(data_path, "r");
 	    while (!feof(data_file)) {
 		count = fread(buffer, 1, 512, data_file);
 		fwrite(buffer, count, 1L, mach_o->mach_o_file);
@@ -460,9 +523,9 @@ static void usage() {
     exit(1);
 }
 
-typedef void (*action_op)(mach_o_obj *mach_o, mach_o_command *command);
+typedef void (*action_op)(mach_o_obj *mach_o, mach_o_command *command, char *arg);
 
-typedef enum {SEGMENTS=1, COMMANDS, APPEND} action_id;
+typedef enum {HELP=1, SEGMENTS, COMMANDS, APPEND} action_id;
 
 typedef struct {
     action_id id;
@@ -471,6 +534,7 @@ typedef struct {
 } mach_o_action;
 
 static mach_o_action actions[] = {
+    {.id = HELP, .name = "help", .op = NULL},
     {.id = COMMANDS, .name = "commands", .op = print_command},
     {.id = SEGMENTS, .name = "segments", .op = print_segment},
     {.id = APPEND, .name = "append", .op = append_data},
@@ -485,7 +549,7 @@ int main(int argc, char **argv)
     int option_index = 0;
     char *command;
     mach_o_action action = {0};
-    char *mode;
+    char *mode, *mach_o_file, *action_arg;
 
     while (1) {
     int c;
@@ -524,27 +588,31 @@ int main(int argc, char **argv)
 	    break;
 	}
     }
-    if (action.id == 0) {
+    switch(action.id) {
+    case HELP:
 	usage();
-    }
-    if (action.id == APPEND) {
-	if (optind >= argc) {
+	break;
+    case APPEND:
+	if (argc != optind + 2) {
 	    usage();
 	}
-	mach_o.data_path = argv[optind++];
-    }
-    switch(action.id) {
-    case APPEND:
 	mode = "r+";
+	action_arg = argv[optind++];
+	mach_o_file = argv[optind];
 	break;
     default:
+	if (argc != optind + 1) {
+	    usage();
+	}
 	mode = "r";
+	mach_o_file = argv[optind];
+	action_arg = NULL;
 	break;
     }
-    init_mach_o(&mach_o, argv[optind], mode);
+    init_mach_o(&mach_o, mach_o_file, mode);
     if (action.op) {
 	for (int i = 0; i < mach_o.num_commands; i++) {
-	    action.op(&mach_o, mach_o.commands + i);
+	    action.op(&mach_o, mach_o.commands + i, action_arg);
 	}
     }
     destroy_mach_o(&mach_o);

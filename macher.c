@@ -27,6 +27,7 @@ typedef struct {
     bool reverse_bytes;
     bool is_64bit;
     char *path;
+    char *mode;
     FILE *mach_o_file;
     int header_size;
     int num_commands;
@@ -35,7 +36,127 @@ typedef struct {
     char *data_path;
 } mach_o_obj;
 
-typedef struct mach_o_action_t mach_o_action;
+static void swap_data_bytes(mach_o_obj *mach_o, mach_o_command *command);
+static void print_command(mach_o_obj *mach_o, mach_o_command *command);
+static void print_segment(mach_o_obj *mach_o, mach_o_command *command);
+static void compute_command_space(mach_o_obj *mach_o);
+static void init_mach_o(mach_o_obj *mach_o, char *path, char *mode);
+static void destroy_mach_o(mach_o_obj *mach_o);
+static void usage();
+
+
+static void init_mach_o(mach_o_obj *mach_o, char *path, char *mode) {
+    uint32_t magic;
+    struct load_command lc;
+    mach_o_command mc;
+
+    mach_o->path = path;
+    mach_o->mach_o_file = fopen(mach_o->path, mode);
+    if (! mach_o->mach_o_file) {
+	printf("Could not open mach-o file %s\n", mach_o->path);
+	exit(1);
+    }
+    /*
+     * Read the magic number to figure out which type of Mach-O file we have.
+     */
+    fread(&magic, sizeof(uint32_t), 1, mach_o->mach_o_file);
+    switch (magic) {
+    case FAT_MAGIC:
+    case OSSwapInt32(FAT_MAGIC):
+	printf("Fat binaries are not supported.\n"
+	       "Use lipo to split the file into single-architecture binaries.\n");
+	exit(1);
+    case MH_MAGIC_64:
+	mach_o->is_64bit = true;
+	mach_o->reverse_bytes = false;
+	break;
+    case MH_MAGIC:
+	mach_o->is_64bit = false;
+	mach_o->reverse_bytes = false;
+	break;
+    case OSSwapInt32(MH_MAGIC_64):
+	mach_o->is_64bit = true;
+	mach_o->reverse_bytes = true;
+	break;
+    case OSSwapInt32(MH_MAGIC):
+	mach_o->is_64bit = true;
+	mach_o->reverse_bytes = false;
+	break;
+    default:
+	printf("error: The binary is not a mach-O file.\n");
+	exit(1);
+	}
+    if (mach_o->verbose) {
+	struct stat st;
+	stat(mach_o->path, &st);
+	printf("Mach-O magic number is 0x%x.\n", magic);
+	printf("Mach-O file size is %llu.\n", st.st_size);
+    }
+    /*
+     * Read the Mach-O header.
+     */
+    fseek(mach_o->mach_o_file, 0L, SEEK_SET);
+    if (mach_o->is_64bit) {
+	struct mach_header_64 header;
+	mach_o->header_size = sizeof(struct mach_header_64);
+	fread(&header, mach_o->header_size, 1, mach_o->mach_o_file);
+	if (mach_o->reverse_bytes) {
+	    swap_mach_header_64(&header, 0);
+	}
+	mach_o->num_commands = header.ncmds;
+	if (mach_o->verbose) {
+	    printf("There are %u bytes being used to store %u load commands.\n",
+		   header.sizeofcmds, header.ncmds);
+	}
+    } else {
+	struct mach_header header;
+	mach_o->header_size = sizeof(struct mach_header);
+	fread(&header, mach_o->header_size, 1, mach_o->mach_o_file);
+	if (mach_o->reverse_bytes) {
+	    swap_mach_header(&header, 0);
+	}
+	mach_o->num_commands = header.ncmds;
+	if (mach_o->verbose) {
+	    printf("There are %u bytes being used to store %u load commands.\n",
+		   header.sizeofcmds, header.ncmds);
+	}
+    }
+    /*
+     * Copy all of the load commands into memory.
+     */
+    mach_o->commands = (mach_o_command *) malloc(
+		            sizeof(mach_o_command) * mach_o->num_commands);
+    fseek(mach_o->mach_o_file, mach_o->header_size, SEEK_SET);
+    for (int i = 0; i < mach_o->num_commands; i++) {
+	long pos = ftell(mach_o->mach_o_file);
+	fread(&lc, sizeof(struct load_command), 1, mach_o->mach_o_file);
+	if (mach_o->reverse_bytes) {
+	    swap_load_command(&lc, 0);
+	}
+	mc.reversed = false;
+	mc.position = pos;
+	mc.lc = lc;
+	mc.data = malloc(lc.cmdsize);
+	fseek(mach_o->mach_o_file, pos, SEEK_SET);
+	fread(mc.data, lc.cmdsize, 1, mach_o->mach_o_file);
+	swap_data_bytes(mach_o, &mc);
+	mach_o->commands[i] = mc;
+    }
+    /*
+     * Check how much space is available in the file for commands.
+     */
+    compute_command_space(mach_o);
+}
+
+static void destroy_mach_o(mach_o_obj *mach_o) {
+    for (int i = 0; i < mach_o->num_commands; i++) {
+	mach_o_command *command = mach_o->commands + i;
+	free(command->data);
+    }
+    free(mach_o->commands);
+    mach_o->commands = NULL;
+    fclose(mach_o->mach_o_file);
+}
 
 static void swap_data_bytes(mach_o_obj *mach_o, mach_o_command *command) {
     /*
@@ -80,7 +201,8 @@ static void swap_data_bytes(mach_o_obj *mach_o, mach_o_command *command) {
 }
 
 static void print_command(mach_o_obj *mach_o, mach_o_command *command) {
-    switch (command->lc.cmd & ~LC_REQ_DYLD) {
+    int command_id = command->lc.cmd & ~LC_REQ_DYLD;
+    switch (command_id) {
     case LC_SEGMENT:
 	{
 	    struct segment_command *seg =
@@ -100,8 +222,8 @@ static void print_command(mach_o_obj *mach_o, mach_o_command *command) {
 		    printf("    No sections\n");
 		}
 	    }
-	    break;
 	}
+	break;
     case LC_SEGMENT_64:
 	{
 	    struct segment_command_64 *seg = (struct segment_command_64 *)
@@ -121,22 +243,22 @@ static void print_command(mach_o_obj *mach_o, mach_o_command *command) {
 		    printf("    No sections\n");
 		}
 	    }
-	    break;
 	}
+	break;
     case LC_ID_DYLIB:
 	{
 	    struct dylib_command *dl = (struct dylib_command *)command->data;
 	    printf("LC_ID_DYLIB: %s\n",
 		   (char *)command->data + dl->dylib.name.offset);
-	    break;
 	}
+	break;
     case LC_LOAD_DYLIB:
 	{
 	    struct dylib_command *dl = (struct dylib_command *)command->data;
 	    printf("LC_LOAD_DYLIB: %s\n",
 		   (char *) command->data + dl->dylib.name.offset);
-	    break;
 	}
+	break;
     case LC_UUID:
 	{
 	    struct uuid_command *uu = (struct uuid_command *)command->data;
@@ -144,28 +266,28 @@ static void print_command(mach_o_obj *mach_o, mach_o_command *command) {
 	    uuid[0] = '\0';
 	    uuid_unparse(uu->uuid, uuid);
 	    printf("LC_UUID: %s\n", uuid);
-	    break;
 	}
+	break;
     case LC_SYMTAB:
 	{
 	    struct symtab_command *tab = (struct symtab_command *)command->data;
 	    printf("LC_SYMTAB: offset is %d, %u symbols, strings in [%d : %d]\n",
 		   tab->symoff, tab->nsyms, tab->stroff,
 		   tab->stroff + tab->strsize);
-	    break;
 	}
-    case LC_RPATH:
+	break;
+    case LC_RPATH & ~LC_REQ_DYLD:
 	{
 	    struct rpath_command *rp = (struct rpath_command *)command->data;
-	    printf("LC_RPATH: %s\n", (char *) command->data + rp->path.offset);
-	    break;
+	    printf("LC_RPATH: %s\n", (char *) rp + rp->path.offset);
 	}
+	break;
     case LC_DYLD_INFO:
 	{
 	    printf("%s%s\n", "LC_DYLD_INFO",
 		   (command->lc.cmd & LC_REQ_DYLD) != 0 ? "_ONLY" : "");
-	    break;
 	}
+	break;
     case LC_BUILD_VERSION:
 	{
 	    struct build_version_command *version =
@@ -175,8 +297,8 @@ static void print_command(mach_o_obj *mach_o, mach_o_command *command) {
 	    printf("LC_BUILD_VERSION: min = %d.%d.%d, sdk = %d.%d.%d\n",
 		   MAJOR(min), MINOR(min), PATCH(min), MAJOR(sdk), MINOR(sdk),
 		   PATCH(sdk));
-	    break;
 	}
+	break;
     case LC_SOURCE_VERSION:
 	{
 	    struct source_version_command *version =
@@ -190,8 +312,8 @@ static void print_command(mach_o_obj *mach_o, mach_o_command *command) {
 	    parts[4] = packed;
 	    printf("LC_SOURCE_VERSION: %d.%d.%d.%d.%d\n", parts[4], parts[3], parts[2],
 		   parts[1], parts[0]);
-	    break;
 	}
+	break;
     case LC_VERSION_MIN_MACOSX:
 	{
 	    struct version_min_command *version =
@@ -201,10 +323,11 @@ static void print_command(mach_o_obj *mach_o, mach_o_command *command) {
 	    printf("LC_VERSION_MIN_MACOSX: min = %d.%d.%d, sdk = %d.%d.%d\n",
 		   MAJOR(min), MINOR(min), PATCH(min), MAJOR(sdk), MINOR(sdk),
 		   PATCH(sdk));
-	    break;
 	}
+	break;
     default:
-	printf("%s\n", load_command_names[command->lc.cmd & ~LC_REQ_DYLD]);
+	printf("%s\n", load_command_names[command_id]);
+	break;
     }
 }
 
@@ -262,96 +385,11 @@ static void compute_command_space(mach_o_obj *mach_o) {
     }
 }
 
-static void init_mach_o(mach_o_obj *mach_o, mach_o_action *action) {
-    uint32_t magic;
-    struct load_command lc;
-    mach_o_command mc;
-    struct stat st; 
-    stat(mach_o->path, &st);
-    mach_o->mach_o_file = fopen(mach_o->path, "r+");
-     
-    if (! mach_o->mach_o_file) {
-	printf("Could not open mach-o file %s\n", mach_o->path);
-	exit(1);
-    }
-    fread(&magic, sizeof(uint32_t), 1, mach_o->mach_o_file);
-    switch (magic) {
-    case FAT_MAGIC:
-    case OSSwapInt32(FAT_MAGIC):
-	printf("Fat binaries are not supported.\n"
-	       "Use lipo to split the file into single-architecture binaries.\n");
-	exit(1);
-    case MH_MAGIC_64:
-	mach_o->is_64bit = true;
-	mach_o->reverse_bytes = false;
-	break;
-    case MH_MAGIC:
-	mach_o->is_64bit = false;
-	mach_o->reverse_bytes = false;
-	break;
-    case OSSwapInt32(MH_MAGIC_64):
-	mach_o->is_64bit = true;
-	mach_o->reverse_bytes = true;
-	break;
-    case OSSwapInt32(MH_MAGIC):
-	mach_o->is_64bit = true;
-	mach_o->reverse_bytes = false;
-	break;
-    default:
-	printf("error: The binary is not a mach-O file.\n");
-	exit(1);
-	}
-    if (mach_o->verbose) {
-	printf("Mach-O magic number is 0x%x.\n", magic);
-	printf("Mach-O file size is %llu.\n", st.st_size);
-    }
-    fseek(mach_o->mach_o_file, 0L, SEEK_SET);
-    if (mach_o->is_64bit) {
-	struct mach_header_64 header;
-	mach_o->header_size = sizeof(struct mach_header_64);
-	fread(&header, mach_o->header_size, 1, mach_o->mach_o_file);
-	if (mach_o->reverse_bytes) {
-	    swap_mach_header_64(&header, 0);
-	}
-	mach_o->num_commands = header.ncmds;
-	if (mach_o->verbose) {
-	    printf("There are %u bytes being used to store %u load commands.\n",
-		   header.sizeofcmds, header.ncmds);
-	}
-    } else {
-	struct mach_header header;
-	mach_o->header_size = sizeof(struct mach_header);
-	fread(&header, mach_o->header_size, 1, mach_o->mach_o_file);
-	if (mach_o->reverse_bytes) {
-	    swap_mach_header(&header, 0);
-	}
-	mach_o->num_commands = header.ncmds;
-	if (mach_o->verbose) {
-	    printf("There are %u bytes being used to store %u load commands.\n",
-		   header.sizeofcmds, header.ncmds);
-	}
-    }
-    mach_o->commands = (mach_o_command *) malloc(
-		            sizeof(mach_o_command) * mach_o->num_commands);
-    fseek(mach_o->mach_o_file, mach_o->header_size, SEEK_SET);
-    for (int i = 0; i < mach_o->num_commands; i++) {
-	long pos = ftell(mach_o->mach_o_file);
-	fread(&lc, sizeof(struct load_command), 1, mach_o->mach_o_file);
-	if (mach_o->reverse_bytes) {
-	    swap_load_command(&lc, 0);
-	}
-	mc.reversed = false;
-	mc.position = pos;
-	mc.lc = lc;
-	mc.data = malloc(lc.cmdsize);
-	fseek(mach_o->mach_o_file, pos, SEEK_SET);
-	fread(mc.data, lc.cmdsize, 1, mach_o->mach_o_file);
-	swap_data_bytes(mach_o, &mc);
-	mach_o->commands[i] = mc;
-    }
-    compute_command_space(mach_o);
-}
-
+/*
+ * When appending data we need to change values in two of the load commands but
+ * the size of the commands does not change.  So we just overwrite the commands
+ * in the file and then append the data.
+ */
 void append_data(mach_o_obj *mach_o, mach_o_command *command) {
     struct stat st;
     unsigned long data_size;
@@ -416,21 +454,21 @@ void append_data(mach_o_obj *mach_o, mach_o_command *command) {
 
 static void usage() {
     printf("Usage: \n");
-    printf("    mach_o [-v] append <datafile> <mach-O file>\n");
     printf("    mach_o [-v] segments <mach-O file>\n");
     printf("    mach_o [-v] commands <mach-O file>\n");
+    printf("    mach_o [-v] append <datafile> <mach-O file>\n");
     exit(1);
 }
 
 typedef void (*action_op)(mach_o_obj *mach_o, mach_o_command *command);
 
-typedef enum {COMMANDS=1, SEGMENTS, APPEND} action_id;
+typedef enum {SEGMENTS=1, COMMANDS, APPEND} action_id;
 
-struct mach_o_action_t {
+typedef struct {
     action_id id;
     char *name;
     action_op op;
-};
+} mach_o_action;
 
 static mach_o_action actions[] = {
     {.id = COMMANDS, .name = "commands", .op = print_command},
@@ -447,6 +485,7 @@ int main(int argc, char **argv)
     int option_index = 0;
     char *command;
     mach_o_action action = {0};
+    char *mode;
 
     while (1) {
     int c;
@@ -494,16 +533,22 @@ int main(int argc, char **argv)
 	}
 	mach_o.data_path = argv[optind++];
     }
-    mach_o.path = argv[optind];
-    init_mach_o(&mach_o, &action);
-    for (int i = 0; i < mach_o.num_commands; i++) {
-	mach_o_command *command = mach_o.commands + i;
-	if (action.op) {
-	    action.op(&mach_o, command);
+    switch(action.id) {
+    case APPEND:
+	mode = "r+";
+	break;
+    default:
+	mode = "r";
+	break;
+    }
+    init_mach_o(&mach_o, argv[optind], mode);
+    if (action.op) {
+	for (int i = 0; i < mach_o.num_commands; i++) {
+	    action.op(&mach_o, mach_o.commands + i);
 	}
     }
-    // Call destroy
-    fclose(mach_o.mach_o_file);
+    destroy_mach_o(&mach_o);
+    return 0;
 }
 
 /*

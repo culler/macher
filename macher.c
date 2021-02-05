@@ -27,9 +27,10 @@ typedef struct {
     bool reverse_bytes;
     bool is_64bit;
     char *path;
-    FILE *file;
+    FILE *mach_o_file;
     int header_size;
     int num_commands;
+    unsigned long command_space;
     mach_o_command *commands;
     char *data_path;
 } mach_o_obj;
@@ -213,20 +214,67 @@ static void print_segment(mach_o_obj *mach_o, mach_o_command *command) {
     }
 }
 
+static void compute_command_space(mach_o_obj *mach_o) {
+    int command_space = -1;
+    for (int i = 0; i < mach_o->num_commands; i++) {
+	mach_o_command *command = mach_o->commands + i;
+	if (command->lc.cmd == LC_SEGMENT_64) {
+	    struct segment_command_64 *seg = (struct segment_command_64 *)
+		command->data;
+	    if (!strcmp(seg->segname, "__TEXT")) {
+		struct section_64 *section = (struct section_64 *)
+		    (command->data + sizeof(struct segment_command_64));
+		command_space = section->offset;
+		for (int i = 1; i < seg->nsects; i++){
+		    if (section->offset < command_space) {
+			command_space = section->offset;
+		    }
+		    section++;
+		}
+		break;
+	    }
+	} else if (command->lc.cmd == LC_SEGMENT) {
+	    struct segment_command *seg = (struct segment_command *)
+		command->data;
+	    if (!strcmp(seg->segname, "__TEXT")) {
+		struct section *section = (struct section *)
+		    ((char *)seg + sizeof(struct segment_command));
+		command_space = section->offset;
+		for (int i = 1; i < seg->nsects; i++){
+		    if (section->offset < command_space) {
+			command_space = section->offset;
+		    }
+		    section++;
+		}
+		break;
+	    }
+	}
+
+    }
+    if (command_space >= 0) {
+	mach_o->command_space = command_space;
+	if (mach_o->verbose) {
+	    printf("There are %lu bytes available for storing load commands.\n\n",
+		   mach_o->command_space);
+	}
+    } else {
+	mach_o->command_space = 0;
+    }
+}
+
 static void init_mach_o(mach_o_obj *mach_o, mach_o_action *action) {
     uint32_t magic;
     struct load_command lc;
     mach_o_command mc;
-    struct stat st;
-    FILE *mach_o_file = fopen(mach_o->path, "r");
+    struct stat st; 
+    stat(mach_o->path, &st);
+    mach_o->mach_o_file = fopen(mach_o->path, "r+");
      
-    if (! mach_o_file) {
+    if (! mach_o->mach_o_file) {
 	printf("Could not open mach-o file %s\n", mach_o->path);
 	exit(1);
     }
-    stat(mach_o->path, &st);
-    fseek(mach_o_file, 0, SEEK_SET);
-    fread(&magic, sizeof(uint32_t), 1, mach_o_file);
+    fread(&magic, sizeof(uint32_t), 1, mach_o->mach_o_file);
     switch (magic) {
     case FAT_MAGIC:
     case OSSwapInt32(FAT_MAGIC):
@@ -257,11 +305,11 @@ static void init_mach_o(mach_o_obj *mach_o, mach_o_action *action) {
 	printf("Mach-O magic number is 0x%x.\n", magic);
 	printf("Mach-O file size is %llu.\n", st.st_size);
     }
-    fseek(mach_o_file, 0, SEEK_SET);
+    fseek(mach_o->mach_o_file, 0L, SEEK_SET);
     if (mach_o->is_64bit) {
 	struct mach_header_64 header;
 	mach_o->header_size = sizeof(struct mach_header_64);
-	fread(&header, mach_o->header_size, 1, mach_o_file);
+	fread(&header, mach_o->header_size, 1, mach_o->mach_o_file);
 	if (mach_o->reverse_bytes) {
 	    swap_mach_header_64(&header, 0);
 	}
@@ -273,7 +321,7 @@ static void init_mach_o(mach_o_obj *mach_o, mach_o_action *action) {
     } else {
 	struct mach_header header;
 	mach_o->header_size = sizeof(struct mach_header);
-	fread(&header, mach_o->header_size, 1, mach_o_file);
+	fread(&header, mach_o->header_size, 1, mach_o->mach_o_file);
 	if (mach_o->reverse_bytes) {
 	    swap_mach_header(&header, 0);
 	}
@@ -285,10 +333,10 @@ static void init_mach_o(mach_o_obj *mach_o, mach_o_action *action) {
     }
     mach_o->commands = (mach_o_command *) malloc(
 		            sizeof(mach_o_command) * mach_o->num_commands);
-    fseek(mach_o_file, mach_o->header_size, SEEK_SET);
+    fseek(mach_o->mach_o_file, mach_o->header_size, SEEK_SET);
     for (int i = 0; i < mach_o->num_commands; i++) {
-	long pos = ftell(mach_o_file);
-	fread(&lc, sizeof(struct load_command), 1, mach_o_file);
+	long pos = ftell(mach_o->mach_o_file);
+	fread(&lc, sizeof(struct load_command), 1, mach_o->mach_o_file);
 	if (mach_o->reverse_bytes) {
 	    swap_load_command(&lc, 0);
 	}
@@ -296,12 +344,74 @@ static void init_mach_o(mach_o_obj *mach_o, mach_o_action *action) {
 	mc.position = pos;
 	mc.lc = lc;
 	mc.data = malloc(lc.cmdsize);
-	fseek(mach_o_file, pos, SEEK_SET);
-	fread(mc.data, lc.cmdsize, 1, mach_o_file);
+	fseek(mach_o->mach_o_file, pos, SEEK_SET);
+	fread(mc.data, lc.cmdsize, 1, mach_o->mach_o_file);
 	swap_data_bytes(mach_o, &mc);
 	mach_o->commands[i] = mc;
     }
-    fclose(mach_o_file);
+    compute_command_space(mach_o);
+}
+
+void append_data(mach_o_obj *mach_o, mach_o_command *command) {
+    struct stat st;
+    unsigned long data_size;
+    FILE *mach_o_file, *data_file;
+
+    if (stat(mach_o->data_path, &st)) {
+	printf("Could not find data file %s.\n", mach_o->data_path);
+	exit(1);
+    }
+    data_size = st.st_size;
+    switch (command->lc.cmd & ~LC_REQ_DYLD) {
+    case LC_SEGMENT:
+	{
+	    struct segment_command *segment = (struct segment_command *) command->data;
+	    if (!strcmp(segment->segname, "__LINKEDIT")) {
+		if (mach_o->verbose) {
+		    printf("Extending linkedit segment by %lu bytes.\n", data_size);
+		}
+		segment->filesize += data_size;
+	    }
+	    break;
+	}
+    case LC_SEGMENT_64:
+	{
+	    struct segment_command_64 *segment = (struct segment_command_64 *) command->data;
+	    if (!strcmp(segment->segname, "__LINKEDIT")) {
+		if (mach_o->verbose) {
+		    printf("Extending linkedit segment by %lu bytes.\n", data_size);
+		}
+		segment->filesize += data_size;
+		fseek(mach_o->mach_o_file, command->position, SEEK_SET);
+		int n = fwrite(command->data, command->lc.cmdsize, 1, mach_o->mach_o_file);
+	    }
+	    break;
+	}
+    case LC_SYMTAB:
+	{
+	    char buffer[512];
+	    FILE *data_file;
+	    int count = 0;
+	    struct symtab_command *symtab = (struct symtab_command *) command->data;
+	    if (mach_o->verbose) {
+		printf("Extending symtab string block by %lu bytes.\n", data_size);
+	    }
+	    symtab->strsize += data_size;
+	    fseek(mach_o->mach_o_file, command->position, SEEK_SET);
+	    fwrite(command->data, command->lc.cmdsize, 1, mach_o->mach_o_file);
+	    if (mach_o->verbose) {
+		printf("Appending %lu bytes of data.\n", data_size);
+	    }
+	    fclose(mach_o->mach_o_file);
+	    mach_o->mach_o_file = fopen(mach_o->path, "a");
+	    data_file = fopen(mach_o->data_path, "r");
+	    while (!feof(data_file)) {
+		count = fread(buffer, 1, 512, data_file);
+		fwrite(buffer, count, 1L, mach_o->mach_o_file);
+	    }
+	    fclose(data_file);
+	}
+    }
 }
 
 static void usage() {
@@ -325,16 +435,15 @@ struct mach_o_action_t {
 static mach_o_action actions[] = {
     {.id = COMMANDS, .name = "commands", .op = print_command},
     {.id = SEGMENTS, .name = "segments", .op = print_segment},
-    {.id = APPEND, .name = "append", .op = NULL},
+    {.id = APPEND, .name = "append", .op = append_data},
     {0}
 };
 
 int main(int argc, char **argv)
 {
     mach_o_obj mach_o = {0};
-    char *mach_o_path, *data_path;
+    char *mach_o_path;
     static int verbose_flag;
-    struct stat st;
     int option_index = 0;
     char *command;
     mach_o_action action = {0};
@@ -383,66 +492,18 @@ int main(int argc, char **argv)
 	if (optind >= argc) {
 	    usage();
 	}
-	data_path = argv[optind++];
-	if (stat(data_path, &st)) {
-	    printf("Could not find data file.\n");
-	    exit(1);
-	}
+	mach_o.data_path = argv[optind++];
     }
     mach_o.path = argv[optind];
     init_mach_o(&mach_o, &action);
-    /*
-     * Compute how much space is available for storing load commands.  The
-     * commands are stored in the __TEXT segment, before its first section.
-     */
-    if (mach_o.verbose) {
-	int command_space = -1;
-	for (int i = 0; i < mach_o.num_commands; i++) {
-	    mach_o_command *command = mach_o.commands + i;
-	    if (command->lc.cmd == LC_SEGMENT_64) {
-		struct segment_command_64 *seg = (struct segment_command_64 *)
-		    command->data;
-		if (!strcmp(seg->segname, "__TEXT")) {
-		    struct section_64 *section = (struct section_64 *)
-			(command->data + sizeof(struct segment_command_64));
-		    command_space = section->offset;
-		    for (int i = 1; i < seg->nsects; i++){
-			if (section->offset < command_space) {
-			    command_space = section->offset;
-			}
-			section++;
-		    }
-		    break;
-		}
-	    } else if (command->lc.cmd == LC_SEGMENT) {
-		struct segment_command *seg = (struct segment_command *)
-		    command->data;
-		if (!strcmp(seg->segname, "__TEXT")) {
-		    struct section *section = (struct section *)
-			((char *)seg + sizeof(struct segment_command));
-		    command_space = section->offset;
-		    for (int i = 1; i < seg->nsects; i++){
-			if (section->offset < command_space) {
-			    command_space = section->offset;
-			}
-			section++;
-		    }
-		    break;
-		}
-	    }
-
-	}
-	if (command_space >= 0) {
-	    printf("There are %d bytes available for storing load commands.\n\n",
-		   command_space);
-	}
-    }
     for (int i = 0; i < mach_o.num_commands; i++) {
 	mach_o_command *command = mach_o.commands + i;
 	if (action.op) {
 	    action.op(&mach_o, command);
 	}
     }
+    // Call destroy
+    fclose(mach_o.mach_o_file);
 }
 
 /*

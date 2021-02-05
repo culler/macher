@@ -37,15 +37,15 @@ append
     $ macher [-options] append <data file path> <Mach-O file path>
 
     Appends arbitrary data to the end of the Mach-O file and alters both the
-    __LINKEDIT segment load command and the __SYMTAB load command, making the
-    extra data become part of the string data block which appears at the end of
-    the __LINKEDIT segment.  The __LINKEDIT segment is the last segment in the
-    file and is required to extend to the end of the file.
+    load command for the __LINKEDIT segment and the LC_SYMTAB load command,
+    making the extra data become part of the string data block which appears at
+    the end of the __LINKEDIT segment.  The __LINKEDIT segment is the last
+    segment in the file and is required to extend to the end of the file.
 
     The main purpose of this command is to make it possible to produce a Zip
     self-extracting archive, by appending a Zip file to the end of a Mach-O
-    binary file, without producing an invalid Mach-O binary file.  Simply
+    binary file, without creating an invalid Mach-O binary file.  Simply
     appending the Zip file without modifying the load commands corrupts the
-    Mach-O structure by causing the __LINKEDIT segment to fail to extend to the
-    end of the file.
+    Mach-O structure by causing the __LINKEDIT segment not to extend to the
+    end of the file as required.
 

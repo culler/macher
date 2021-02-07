@@ -56,7 +56,7 @@ add_rpath
     $ macher [-options] add_rpath <library search path> <Mach-O file path>
 
     Adds an LC_RPATH load command with the specified search path.  This is
-    equivalent to :code"`install_name_tool -add_rpath` except that it will not
+    equivalent to :code:`install_name_tool -add_rpath` except that it will not
     add the load command if there already exists an LC_RPATH load command with
     the same path.
 

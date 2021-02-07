@@ -74,5 +74,5 @@ edit_libpath
     the command is replaced by the specified path.
 
     This is similar to :code:`install_name_tool -change` except that it does not
-    require that you provide the existing path to be replaced.  It used the file
+    require that you provide the existing path to be replaced.  It uses the file
     name of the dylib to decide whether to do the replacement.

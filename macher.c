@@ -32,20 +32,26 @@ typedef struct {
     int header_size;
     void *header_data;
     int num_commands;
+    int command_block_size;
     unsigned long command_space;
     mach_o_command *commands;
 } mach_o_obj;
 
 static void swap_data_bytes(mach_o_obj *mach_o, mach_o_command *command);
-static void update_header(mach_o_obj *mach_o, int num_cmds, int size_change);
-static void print_command(mach_o_obj *mach_o, mach_o_command *command, char *arg);
-static void print_segment(mach_o_obj *mach_o, mach_o_command *command, char *arg);
+static void update_header(mach_o_obj *mach_o);
 static void compute_command_space(mach_o_obj *mach_o);
+static bool find_rpath(mach_o_obj *mach_o, char *rpath);
 static void remove_command(mach_o_obj *mach_o, int index);
 static void init_mach_o(mach_o_obj *mach_o, char *path, char *mode);
 static void destroy_mach_o(mach_o_obj *mach_o);
 static void usage();
 
+/* actions */
+static int print_command(mach_o_obj *mach_o, mach_o_command *command, char *arg);
+static int print_segment(mach_o_obj *mach_o, mach_o_command *command, char *arg);
+static int append_data(mach_o_obj *mach_o, mach_o_command *command, char *data_path);
+static int add_rpath(mach_o_obj *mach_o, mach_o_command *command, char *rpath);
+static int remove_rpath(mach_o_obj *mach_o, mach_o_command *command, char *rpath);
 
 static void init_mach_o(mach_o_obj *mach_o, char *path, char *mode) {
     uint32_t magic;
@@ -108,7 +114,9 @@ static void init_mach_o(mach_o_obj *mach_o, char *path, char *mode) {
 	    swap_mach_header_64(header, 0);
 	}
 	mach_o->num_commands = header->ncmds;
+	mach_o->command_block_size = header->sizeofcmds;
 	if (mach_o->verbose) {
+	    printf("The Mach-O header occupies %d bytes\n", mach_o->header_size);
 	    printf("There are %u bytes being used to store %u load commands.\n",
 		   header->sizeofcmds, header->ncmds);
 	}
@@ -122,16 +130,18 @@ static void init_mach_o(mach_o_obj *mach_o, char *path, char *mode) {
 	    swap_mach_header(header, 0);
 	}
 	mach_o->num_commands = header->ncmds;
+	mach_o->command_block_size = header->sizeofcmds;
 	if (mach_o->verbose) {
 	    printf("There are %u bytes being used to store %u load commands.\n",
 		   header->sizeofcmds, header->ncmds);
 	}
     }
     /*
-     * Copy all of the load commands into memory.
+     * Copy all of the load commands into memory.  We may add at most one new
+     * command, so we allocate space for one extra.
      */
     mach_o->commands = (mach_o_command *) malloc(
-		            sizeof(mach_o_command) * mach_o->num_commands);
+	sizeof(mach_o_command) * (1 + mach_o->num_commands));
     fseek(mach_o->mach_o_file, mach_o->header_size, SEEK_SET);
     for (int i = 0; i < mach_o->num_commands; i++) {
 	long pos = ftell(mach_o->mach_o_file);
@@ -208,12 +218,12 @@ static void swap_data_bytes(mach_o_obj *mach_o, mach_o_command *command) {
     }
 }
 
-static void update_header(mach_o_obj *mach_o, int ncmds, int size_change) {
+static void update_header(mach_o_obj *mach_o) {
     if (mach_o->is_64bit) {
 	struct mach_header_64 *header = (struct mach_header_64 *)
 	    mach_o->header_data;
-	header->ncmds = ncmds;
-	header->sizeofcmds += size_change;
+	header->ncmds = mach_o->num_commands;
+	header->sizeofcmds = mach_o->command_block_size;
 	fseek(mach_o->mach_o_file, 0, SEEK_SET);
 	if (mach_o->reverse_bytes) {
 	    swap_mach_header_64(header, 0);
@@ -227,8 +237,8 @@ static void update_header(mach_o_obj *mach_o, int ncmds, int size_change) {
     } else {
 	struct mach_header *header = (struct mach_header *)
 	    mach_o->header_data;
-	header->ncmds = ncmds;
-	header->sizeofcmds += size_change;
+	header->ncmds = mach_o->num_commands;
+	header->sizeofcmds = mach_o->command_block_size;
 	fseek(mach_o->mach_o_file, 0, SEEK_SET);
 	if (mach_o->reverse_bytes) {
 	    swap_mach_header(header, 0);
@@ -243,7 +253,90 @@ static void update_header(mach_o_obj *mach_o, int ncmds, int size_change) {
     }
 }
 
-static void print_command(mach_o_obj *mach_o, mach_o_command *command, char *arg) {
+static void remove_command(mach_o_obj *mach_o, int index){
+    mach_o_command *command = mach_o->commands + index;
+    int command_size = command->lc.cmdsize;
+    int tail_size = mach_o->command_space - command->position - command_size;
+    char *buffer = malloc(tail_size);
+    char null = '\0';
+    fseek(mach_o->mach_o_file, command->position + command_size, SEEK_SET);
+    fread(buffer, tail_size, 1, mach_o->mach_o_file);
+    fseek(mach_o->mach_o_file, command->position, SEEK_SET);
+    fwrite(buffer, tail_size, 1, mach_o->mach_o_file);
+    fwrite(&null, 1, command_size, mach_o->mach_o_file);
+    free(command->data);
+    for (int i = index; i < mach_o->num_commands - 1; i++) {
+	mach_o->commands[i] = mach_o->commands[i + 1];
+    }
+    mach_o->num_commands -= 1;
+    mach_o->command_block_size -= command_size;
+    mach_o->command_space += command_size;
+    update_header(mach_o);
+}
+
+static void compute_command_space(mach_o_obj *mach_o) {
+    int command_space = -1;
+    for (int i = 0; i < mach_o->num_commands; i++) {
+	mach_o_command *command = mach_o->commands + i;
+	if (command->lc.cmd == LC_SEGMENT_64) {
+	    struct segment_command_64 *seg = (struct segment_command_64 *)
+		command->data;
+	    if (!strcmp(seg->segname, "__TEXT")) {
+		struct section_64 *section = (struct section_64 *)
+		    (command->data + sizeof(struct segment_command_64));
+		command_space = section->offset;
+		for (int i = 1; i < seg->nsects; i++){
+		    if (section->offset < command_space) {
+			command_space = section->offset;
+		    }
+		    section++;
+		}
+		break;
+	    }
+	} else if (command->lc.cmd == LC_SEGMENT) {
+	    struct segment_command *seg = (struct segment_command *)
+		command->data;
+	    if (!strcmp(seg->segname, "__TEXT")) {
+		struct section *section = (struct section *)
+		    ((char *)seg + sizeof(struct segment_command));
+		command_space = section->offset;
+		for (int i = 1; i < seg->nsects; i++){
+		    if (section->offset < command_space) {
+			command_space = section->offset;
+		    }
+		    section++;
+		}
+		break;
+	    }
+	}
+
+    }
+    if (command_space >= 0) {
+	mach_o->command_space = command_space;
+	if (mach_o->verbose) {
+	    printf("There are %lu bytes available for storing load commands.\n\n",
+		   mach_o->command_space);
+	}
+    } else {
+	mach_o->command_space = 0;
+    }
+}
+
+static bool find_rpath(mach_o_obj *mach_o, char *rpath) {
+    for (int i = 0; i < mach_o->num_commands; i++) {
+	mach_o_command *command = mach_o->commands + i;
+	if (command->lc.cmd == LC_RPATH) {
+	    struct rpath_command *rp = (struct rpath_command *) command->data;
+	    char *command_rpath = (char *) rp + rp->path.offset;
+	    if (!strcmp(rpath, command_rpath)) {
+	    	return true;
+	    }
+	}
+    }
+    return false;
+}
+
+static int print_command(mach_o_obj *mach_o, mach_o_command *command, char *arg) {
     int command_id = command->lc.cmd & ~LC_REQ_DYLD;
     switch (command_id) {
     case LC_SEGMENT:
@@ -372,83 +465,17 @@ static void print_command(mach_o_obj *mach_o, mach_o_command *command, char *arg
 	printf("%s\n", load_command_names[command_id]);
 	break;
     }
+    return 0;
 }
 
-static void remove_command(mach_o_obj *mach_o, int index){
-    mach_o_command *command = mach_o->commands + index;
-    int command_size = command->lc.cmdsize;
-    int tail_size = mach_o->command_space - command->position - command_size;
-    char *buffer = malloc(tail_size);
-    char null = '\0';
-    fseek(mach_o->mach_o_file, command->position + command_size, SEEK_SET);
-    fread(buffer, tail_size, 1, mach_o->mach_o_file);
-    fseek(mach_o->mach_o_file, command->position, SEEK_SET);
-    fwrite(buffer, tail_size, 1, mach_o->mach_o_file);
-    fwrite(&null, 1, command_size, mach_o->mach_o_file);
-    free(command->data);
-    for (int i = index; i < mach_o->num_commands - 1; i++) {
-	mach_o->commands[i] = mach_o->commands[i + 1];
-    }
-    mach_o->num_commands -= 1;
-    mach_o->command_space += command_size;
-    update_header(mach_o, mach_o->num_commands, -command_size);
-}
-
-static void print_segment(mach_o_obj *mach_o, mach_o_command *command, char *arg) {
+static int print_segment(mach_o_obj *mach_o, mach_o_command *command, char *arg) {
     if (command->lc.cmd == LC_SEGMENT || command->lc.cmd == LC_SEGMENT_64) {
 	print_command(mach_o, command, arg);
     }
+    return 0;
 }
 
-static void compute_command_space(mach_o_obj *mach_o) {
-    int command_space = -1;
-    for (int i = 0; i < mach_o->num_commands; i++) {
-	mach_o_command *command = mach_o->commands + i;
-	if (command->lc.cmd == LC_SEGMENT_64) {
-	    struct segment_command_64 *seg = (struct segment_command_64 *)
-		command->data;
-	    if (!strcmp(seg->segname, "__TEXT")) {
-		struct section_64 *section = (struct section_64 *)
-		    (command->data + sizeof(struct segment_command_64));
-		command_space = section->offset;
-		for (int i = 1; i < seg->nsects; i++){
-		    if (section->offset < command_space) {
-			command_space = section->offset;
-		    }
-		    section++;
-		}
-		break;
-	    }
-	} else if (command->lc.cmd == LC_SEGMENT) {
-	    struct segment_command *seg = (struct segment_command *)
-		command->data;
-	    if (!strcmp(seg->segname, "__TEXT")) {
-		struct section *section = (struct section *)
-		    ((char *)seg + sizeof(struct segment_command));
-		command_space = section->offset;
-		for (int i = 1; i < seg->nsects; i++){
-		    if (section->offset < command_space) {
-			command_space = section->offset;
-		    }
-		    section++;
-		}
-		break;
-	    }
-	}
-
-    }
-    if (command_space >= 0) {
-	mach_o->command_space = command_space;
-	if (mach_o->verbose) {
-	    printf("There are %lu bytes available for storing load commands.\n\n",
-		   mach_o->command_space);
-	}
-    } else {
-	mach_o->command_space = 0;
-    }
-}
-
-void append_data(mach_o_obj *mach_o, mach_o_command *command, char *data_path) {
+static int append_data(mach_o_obj *mach_o, mach_o_command *command, char *data_path) {
     /*
      * When appending data we need to change values in two of the load commands but
      * the size of the commands does not change.  So we just overwrite the commands
@@ -513,6 +540,56 @@ void append_data(mach_o_obj *mach_o, mach_o_command *command, char *data_path) {
 	    fclose(data_file);
 	}
     }
+    return 0;
+}
+
+static int add_rpath(mach_o_obj *mach_o, mach_o_command *command, char *rpath){
+    mach_o_command *mc = mach_o->commands + mach_o->num_commands;
+    struct rpath_command *rc;
+    int command_size = sizeof(struct rpath_command) + strlen(rpath) + 1;
+    if (mach_o->is_64bit) {
+	command_size = (command_size + 15) & ~15;
+    } else {
+	command_size = (command_size + 7) + ~7;
+    }
+    if (command_size + mach_o->command_block_size > mach_o->command_space) {
+	printf("There is not enough space in the file for another RPATH.\n");
+	exit(1);
+    }
+    if (mach_o->verbose) {
+	printf("Adding rpath %s\n", rpath);
+    }
+    mc->lc.cmd = LC_RPATH;
+    mc->lc.cmdsize = command_size;
+    mc->reversed = false;
+    mc->position = mach_o->header_size + mach_o->command_block_size;
+    mc->data = calloc(command_size, 1);
+    rc = (struct rpath_command *) mc->data;
+    rc->cmd = mc->lc.cmd;
+    rc->cmdsize = mc->lc.cmdsize;
+    rc->path.offset = sizeof(struct rpath_command);
+    strcpy((char *) mc->data + rc->path.offset, rpath);
+    mach_o->num_commands += 1;
+    mach_o->command_block_size += command_size;
+    mach_o->command_space -= command_size;
+    fseek(mach_o->mach_o_file, mc->position, SEEK_SET);
+    int count = fwrite((char *) mc->data, 1, command_size, mach_o->mach_o_file);
+    update_header(mach_o);
+    return 1;
+}
+
+static int remove_rpath(mach_o_obj *mach_o, mach_o_command *command, char *rpath) {
+    if (command->lc.cmd == LC_RPATH) {
+	struct rpath_command *rp = (struct rpath_command *) command->data;
+	char *command_path = (char *) rp + rp->path.offset;
+	if (!strcmp(rpath, command_path)) {
+	    if (mach_o->verbose) {
+		printf("Removed RPATH load command for %s\n", rpath);
+	    }
+	    remove_command(mach_o, command - mach_o->commands);
+	}
+    }
+    return 0;
 }
 
 static void usage() {
@@ -523,9 +600,9 @@ static void usage() {
     exit(1);
 }
 
-typedef void (*action_op)(mach_o_obj *mach_o, mach_o_command *command, char *arg);
+typedef int (*action_op)(mach_o_obj *mach_o, mach_o_command *command, char *arg);
 
-typedef enum {HELP=1, SEGMENTS, COMMANDS, APPEND} action_id;
+typedef enum {HELP=1, SEGMENTS, COMMANDS, APPEND, ADD_RPATH, REMOVE_RPATH} action_id;
 
 typedef struct {
     action_id id;
@@ -538,12 +615,14 @@ static mach_o_action actions[] = {
     {.id = COMMANDS, .name = "commands", .op = print_command},
     {.id = SEGMENTS, .name = "segments", .op = print_segment},
     {.id = APPEND, .name = "append", .op = append_data},
+    {.id = ADD_RPATH, .name = "add_rpath", .op = add_rpath},
+    {.id = REMOVE_RPATH, .name = "remove_rpath", .op = remove_rpath},
     {0}
 };
 
 int main(int argc, char **argv)
 {
-    mach_o_obj mach_o = {0};
+    mach_o_obj mach_o = {0}; /* This is a singleton, so we can store it on the stack. */
     char *mach_o_path;
     static int verbose_flag;
     int option_index = 0;
@@ -593,6 +672,8 @@ int main(int argc, char **argv)
 	usage();
 	break;
     case APPEND:
+    case ADD_RPATH:
+    case REMOVE_RPATH:
 	if (argc != optind + 2) {
 	    usage();
 	}
@@ -610,9 +691,19 @@ int main(int argc, char **argv)
 	break;
     }
     init_mach_o(&mach_o, mach_o_file, mode);
+    if ((action.id == ADD_RPATH) && find_rpath(&mach_o, action_arg)) {
+	printf("An RPATH load command for %s already exists.\n", action_arg);
+	exit(1);
+    }
+    if ((action.id == REMOVE_RPATH) && !find_rpath(&mach_o, action_arg)) {
+	printf("No RPATH load command for %s exists.\n", action_arg);
+	exit(1);
+    }
     if (action.op) {
 	for (int i = 0; i < mach_o.num_commands; i++) {
-	    action.op(&mach_o, mach_o.commands + i, action_arg);
+	    if (action.op(&mach_o, mach_o.commands + i, action_arg)) {
+		break;
+	    }
 	}
     }
     destroy_mach_o(&mach_o);

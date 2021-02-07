@@ -54,3 +54,4 @@ char* load_command_names[] = {
 /*0x34*/  "LC_DYLD_CHAINED_FIXUPS",
 /*0x35*/  "LC_FILESET_ENTRY",
 };
+int num_load_commands = 0x36;

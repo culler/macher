@@ -49,3 +49,33 @@ append
     Mach-O structure by causing the __LINKEDIT segment not to extend to the
     end of the file as required.
 
+add_rpath
+
+    $ macher [-options] add_rpath <library search path> <Mach-O file path>
+
+    Adds an LC_RPATH load command with the specified search path.  This is
+    equivalent to :code"`install_name_tool -add_rpath` except that it will not
+    add the load command if there already exists an LC_RPATH load command with
+    the same path.
+
+    If there is a LC_DYLIB command containing the substring @rpath then the
+    loader will search for the library in all paths obtained by replacing
+    @rpath by one of the paths given in LC_RPATH load commands.
+
+remove_rpath
+
+    $ macher [-options] remove_rpath <library search path> <Mach-O file path>
+
+    Removes all LC_RPATH load commands specifying the given search path.
+
+edit_libpath
+
+    $ macher [-options] edit_libpath <dylib path> <Mach-O file path>
+
+    Searches for an LC_DYLIB command for which the library file name is the same
+    as the file name for the specified path.  If one is found, the dylib path in
+    the command is replaced by the specified path.
+
+    This is similar to :code:`install_name_tool -change` except that it does not
+    require that you provide the existing path to be replaced.  It used the file
+    name of the dylib to decide whether to do the replacement.

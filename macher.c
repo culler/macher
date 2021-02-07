@@ -3,6 +3,7 @@
 #include <getopt.h>
 #include <stdbool.h>
 #include <limits.h>
+#include <libgen.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <uuid/uuid.h>
@@ -38,6 +39,7 @@ typedef struct {
 } mach_o_obj;
 
 static void swap_data_bytes(mach_o_obj *mach_o, mach_o_command *command);
+static int  aligned_command_size(mach_o_obj *mach_o, int min_size);
 static void update_header(mach_o_obj *mach_o);
 static void compute_command_space(mach_o_obj *mach_o);
 static bool find_rpath(mach_o_obj *mach_o, char *rpath);
@@ -52,8 +54,10 @@ static int print_segment(mach_o_obj *mach_o, mach_o_command *command, char *arg)
 static int append_data(mach_o_obj *mach_o, mach_o_command *command, char *data_path);
 static int add_rpath(mach_o_obj *mach_o, mach_o_command *command, char *rpath);
 static int remove_rpath(mach_o_obj *mach_o, mach_o_command *command, char *rpath);
+static int edit_libpath(mach_o_obj *mach_o, mach_o_command *command, char *libpath);
 
-static void init_mach_o(mach_o_obj *mach_o, char *path, char *mode) {
+static void init_mach_o(mach_o_obj *mach_o, char *path, char *mode)
+{
     uint32_t magic;
     struct load_command lc;
     mach_o_command mc;
@@ -164,7 +168,8 @@ static void init_mach_o(mach_o_obj *mach_o, char *path, char *mode) {
     compute_command_space(mach_o);
 }
 
-static void destroy_mach_o(mach_o_obj *mach_o) {
+static void destroy_mach_o(mach_o_obj *mach_o)
+{
     for (int i = 0; i < mach_o->num_commands; i++) {
 	mach_o_command *command = mach_o->commands + i;
 	free(command->data);
@@ -176,7 +181,17 @@ static void destroy_mach_o(mach_o_obj *mach_o) {
     fclose(mach_o->mach_o_file);
 }
 
-static void swap_data_bytes(mach_o_obj *mach_o, mach_o_command *command) {
+static int aligned_command_size(mach_o_obj *mach_o, int min_size)
+{
+    if (mach_o->is_64bit) {
+	return (min_size + 15) & ~15;
+    } else {
+	return (min_size + 7) + ~7;
+    }
+}
+
+static void swap_data_bytes(mach_o_obj *mach_o, mach_o_command *command)
+{
     /*
      * Don't do anything to commands that we don't change.
      */
@@ -218,7 +233,8 @@ static void swap_data_bytes(mach_o_obj *mach_o, mach_o_command *command) {
     }
 }
 
-static void update_header(mach_o_obj *mach_o) {
+static void update_header(mach_o_obj *mach_o)
+{
     if (mach_o->is_64bit) {
 	struct mach_header_64 *header = (struct mach_header_64 *)
 	    mach_o->header_data;
@@ -253,7 +269,8 @@ static void update_header(mach_o_obj *mach_o) {
     }
 }
 
-static void remove_command(mach_o_obj *mach_o, int index){
+static void remove_command(mach_o_obj *mach_o, int index)
+{
     mach_o_command *command = mach_o->commands + index;
     int command_size = command->lc.cmdsize;
     int tail_size = mach_o->command_space - command->position - command_size;
@@ -274,7 +291,8 @@ static void remove_command(mach_o_obj *mach_o, int index){
     update_header(mach_o);
 }
 
-static void compute_command_space(mach_o_obj *mach_o) {
+static void compute_command_space(mach_o_obj *mach_o)
+{
     int command_space = -1;
     for (int i = 0; i < mach_o->num_commands; i++) {
 	mach_o_command *command = mach_o->commands + i;
@@ -322,7 +340,8 @@ static void compute_command_space(mach_o_obj *mach_o) {
     }
 }
 
-static bool find_rpath(mach_o_obj *mach_o, char *rpath) {
+static bool find_rpath(mach_o_obj *mach_o, char *rpath)
+{
     for (int i = 0; i < mach_o->num_commands; i++) {
 	mach_o_command *command = mach_o->commands + i;
 	if (command->lc.cmd == LC_RPATH) {
@@ -336,7 +355,8 @@ static bool find_rpath(mach_o_obj *mach_o, char *rpath) {
     return false;
 }
 
-static int print_command(mach_o_obj *mach_o, mach_o_command *command, char *arg) {
+static int print_command(mach_o_obj *mach_o, mach_o_command *command, char *arg)
+{
     int command_id = command->lc.cmd & ~LC_REQ_DYLD;
     switch (command_id) {
     case LC_SEGMENT:
@@ -462,20 +482,27 @@ static int print_command(mach_o_obj *mach_o, mach_o_command *command, char *arg)
 	}
 	break;
     default:
-	printf("%s\n", load_command_names[command_id]);
+	if (command_id < num_load_commands) {
+	    printf("%s\n", load_command_names[command_id]);
+	} else {
+	    printf("Invalid command id %d.\n", command_id);
+	    exit(1);
+	}
 	break;
     }
     return 0;
 }
 
-static int print_segment(mach_o_obj *mach_o, mach_o_command *command, char *arg) {
+static int print_segment(mach_o_obj *mach_o, mach_o_command *command, char *arg)
+{
     if (command->lc.cmd == LC_SEGMENT || command->lc.cmd == LC_SEGMENT_64) {
 	print_command(mach_o, command, arg);
     }
     return 0;
 }
 
-static int append_data(mach_o_obj *mach_o, mach_o_command *command, char *data_path) {
+static int append_data(mach_o_obj *mach_o, mach_o_command *command, char *data_path)
+{
     /*
      * When appending data we need to change values in two of the load commands but
      * the size of the commands does not change.  So we just overwrite the commands
@@ -543,15 +570,12 @@ static int append_data(mach_o_obj *mach_o, mach_o_command *command, char *data_p
     return 0;
 }
 
-static int add_rpath(mach_o_obj *mach_o, mach_o_command *command, char *rpath){
+static int add_rpath(mach_o_obj *mach_o, mach_o_command *command, char *rpath)
+{
     mach_o_command *mc = mach_o->commands + mach_o->num_commands;
     struct rpath_command *rc;
-    int command_size = sizeof(struct rpath_command) + strlen(rpath) + 1;
-    if (mach_o->is_64bit) {
-	command_size = (command_size + 15) & ~15;
-    } else {
-	command_size = (command_size + 7) + ~7;
-    }
+    int min_size = sizeof(struct rpath_command) + strlen(rpath) + 1;
+    int command_size = aligned_command_size(mach_o, min_size);
     if (command_size + mach_o->command_block_size > mach_o->command_space) {
 	printf("There is not enough space in the file for another RPATH.\n");
 	exit(1);
@@ -578,7 +602,8 @@ static int add_rpath(mach_o_obj *mach_o, mach_o_command *command, char *rpath){
     return 1;
 }
 
-static int remove_rpath(mach_o_obj *mach_o, mach_o_command *command, char *rpath) {
+static int remove_rpath(mach_o_obj *mach_o, mach_o_command *command, char *rpath)
+{
     if (command->lc.cmd == LC_RPATH) {
 	struct rpath_command *rp = (struct rpath_command *) command->data;
 	char *command_path = (char *) rp + rp->path.offset;
@@ -592,7 +617,67 @@ static int remove_rpath(mach_o_obj *mach_o, mach_o_command *command, char *rpath
     return 0;
 }
 
-static void usage() {
+static int edit_libpath(mach_o_obj *mach_o, mach_o_command *command, char *libpath)
+{
+    char *old_libpath, *old_libname;
+    char libname[strlen(basename(libpath)) + 1];
+    struct dylib_command *dc;
+
+    if (command->lc.cmd != LC_LOAD_DYLIB) {
+	if (command - mach_o->commands == mach_o->num_commands - 1) {
+	    printf("No LC_LOAD_DYLIB command matches %s.\n", basename(libpath));
+	}
+	return 0;
+    }
+    strcpy(libname, basename(libpath));
+    dc = (struct dylib_command *) command->data;
+    old_libpath = (char *) dc + dc->dylib.name.offset;
+    old_libname = basename(old_libpath);
+    if (strcmp(libname, old_libname) == 0) {
+	struct dylib_command *new_command;
+	int index = command - mach_o->commands;
+	int old_size = command->lc.cmdsize;
+	int min_size = old_size + strlen(libpath) - strlen(old_libpath);
+	int new_size = aligned_command_size(mach_o, min_size);
+	int delta = new_size - old_size;
+	char *tail;
+	int tail_size = mach_o->command_space - command->position - old_size;
+	if (mach_o->command_block_size + delta > mach_o->command_space) {
+	    printf("There is not enough space in the file to change the libpath.\n");
+	    exit(1);
+	}
+	if (mach_o->verbose) {
+	    printf("Found library path %s\n", old_libpath);
+	    printf("Changing to %s\n", libname);
+	}
+	tail = malloc(tail_size);
+	fseek(mach_o->mach_o_file, command->position + old_size, SEEK_SET);
+	fread(tail, tail_size, 1, mach_o->mach_o_file);
+	fseek(mach_o->mach_o_file, command->position, SEEK_SET);
+	command->data = calloc(new_size, 1);
+	command->lc.cmdsize = new_size;
+	new_command = (struct dylib_command *) command->data;
+	*new_command = *dc;
+	new_command->cmdsize = new_size;
+	strcpy((char *)new_command + new_command->dylib.name.offset, libpath);
+	fwrite(command->data, new_size, 1, mach_o->mach_o_file);
+	fwrite(tail, tail_size, 1, mach_o->mach_o_file);
+	free(tail);
+	for (int i = index; i < mach_o->num_commands; i++) {
+	    mach_o->commands[i].position += delta;
+	}
+	mach_o->command_block_size += delta;
+	mach_o->command_space -= delta;
+	update_header(mach_o);
+	free(dc);
+	return 1;
+    } else {
+	return 0;
+    }
+}
+
+static void usage()
+{
     printf("Usage: \n");
     printf("    mach_o [-v] segments <mach-O file>\n");
     printf("    mach_o [-v] commands <mach-O file>\n");
@@ -602,7 +687,8 @@ static void usage() {
 
 typedef int (*action_op)(mach_o_obj *mach_o, mach_o_command *command, char *arg);
 
-typedef enum {HELP=1, SEGMENTS, COMMANDS, APPEND, ADD_RPATH, REMOVE_RPATH} action_id;
+typedef enum {HELP=1, SEGMENTS, COMMANDS, APPEND, ADD_RPATH, REMOVE_RPATH,
+	      EDIT_LIBPATH} action_id;
 
 typedef struct {
     action_id id;
@@ -617,6 +703,7 @@ static mach_o_action actions[] = {
     {.id = APPEND, .name = "append", .op = append_data},
     {.id = ADD_RPATH, .name = "add_rpath", .op = add_rpath},
     {.id = REMOVE_RPATH, .name = "remove_rpath", .op = remove_rpath},
+    {.id = EDIT_LIBPATH, .name = "edit_libpath", .op = edit_libpath},
     {0}
 };
 
@@ -674,6 +761,7 @@ int main(int argc, char **argv)
     case APPEND:
     case ADD_RPATH:
     case REMOVE_RPATH:
+    case EDIT_LIBPATH:
 	if (argc != optind + 2) {
 	    usage();
 	}

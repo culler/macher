@@ -50,7 +50,6 @@ append
     end of the file as required.
 
 add_rpath
-
     $ macher [-options] add_rpath <library search path> <Mach-O file path>
 
     Adds an LC_RPATH load command with the specified search path.  This is
@@ -63,13 +62,11 @@ add_rpath
     @rpath by one of the paths given in LC_RPATH load commands.
 
 remove_rpath
-
     $ macher [-options] remove_rpath <library search path> <Mach-O file path>
 
     Removes all LC_RPATH load commands specifying the given search path.
 
 edit_libpath
-
     $ macher [-options] edit_libpath <dylib path> <Mach-O file path>
 
     Searches for an LC_DYLIB command for which the library file name is the same

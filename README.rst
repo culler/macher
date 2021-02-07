@@ -69,9 +69,9 @@ remove_rpath
 edit_libpath
     $ macher [-options] edit_libpath <dylib path> <Mach-O file path>
 
-    Searches for an LC_DYLIB command for which the library file name is the same
-    as the file name for the specified path.  If one is found, the dylib path in
-    the command is replaced by the specified path.
+    Searches for an LC_DYLIB load command for which the library file name is the
+    same as the file name for the specified path.  If one is found, the dylib
+    path in the command is replaced by the specified path.
 
     This is similar to :code:`install_name_tool -change` except that it does not
     require that you provide the existing path to be replaced.  It uses the file

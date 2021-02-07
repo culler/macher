@@ -49,6 +49,9 @@ append
     Mach-O structure by causing the __LINKEDIT segment not to extend to the
     end of the file as required.
 
+    After appending a Zip file, the :code:`zip -A` command should be used to
+    adjust the offsets withing the Zip data.
+
 add_rpath
     $ macher [-options] add_rpath <library search path> <Mach-O file path>
 

@@ -50,7 +50,7 @@ append
     end of the file as required.
 
     After appending a Zip file, the :code:`zip -A` command should be used to
-    adjust the offsets withing the Zip data.
+    adjust the offset tables within the Zip data.
 
 add_rpath
     $ macher [-options] add_rpath <library search path> <Mach-O file path>

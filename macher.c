@@ -676,44 +676,6 @@ static int edit_libpath(mach_o_obj *mach_o, mach_o_command *command, char *libpa
     old_libname = basename(old_libpath);
     if (strcmp(libname, old_libname) == 0) {
 	change_dylib_path(mach_o, command, libpath);
-#if 0
-	struct dylib_command *new_command;
-	int index = command - mach_o->commands;
-	int old_size = command->lc.cmdsize;
-	int min_size = old_size + strlen(libpath) - strlen(old_libpath);
-	int new_size = aligned_command_size(mach_o, min_size);
-	int delta = new_size - old_size;
-	char *tail;
-	int tail_size = mach_o->command_space - command->position - old_size;
-	if (mach_o->command_block_size + delta > mach_o->command_space) {
-	    printf("There is not enough space in the file to change the libpath.\n");
-	    exit(1);
-	}
-	if (mach_o->verbose) {
-	    printf("Found library path %s\n", old_libpath);
-	    printf("Changing to %s\n", libname);
-	}
-	tail = malloc(tail_size);
-	fseek(mach_o->mach_o_file, command->position + old_size, SEEK_SET);
-	fread(tail, tail_size, 1, mach_o->mach_o_file);
-	fseek(mach_o->mach_o_file, command->position, SEEK_SET);
-	command->data = calloc(new_size, 1);
-	command->lc.cmdsize = new_size;
-	new_command = (struct dylib_command *) command->data;
-	*new_command = *dc;
-	new_command->cmdsize = new_size;
-	strcpy((char *)new_command + new_command->dylib.name.offset, libpath);
-	fwrite(command->data, new_size, 1, mach_o->mach_o_file);
-	fwrite(tail, tail_size, 1, mach_o->mach_o_file);
-	free(tail);
-	for (int i = index; i < mach_o->num_commands; i++) {
-	    mach_o->commands[i].position += delta;
-	}
-	mach_o->command_block_size += delta;
-	mach_o->command_space -= delta;
-	update_header(mach_o);
-	free(dc);
-#endif
 	return 1;
     } else {
 	return 0;

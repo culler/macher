@@ -116,8 +116,8 @@ static void init_mach_o(mach_o_obj *mach_o, char *path, char *mode)
     if (mach_o->verbose) {
 	struct stat st;
 	stat(mach_o->path, &st);
-	printf("Mach-O magic number is 0x%x.\n", magic);
-	printf("Mach-O file size is %llu.\n", st.st_size);
+	printf("The Mach-O magic number is 0x%x.\n", magic);
+	printf("The Mach-O file size is %llu.\n", st.st_size);
     }
     /*
      * Read the Mach-O header.
@@ -137,7 +137,7 @@ static void init_mach_o(mach_o_obj *mach_o, char *path, char *mode)
 	mach_o->command_block_size = header->sizeofcmds;
 	if (mach_o->verbose) {
 	    printf("The Mach-O header occupies %d bytes\n", mach_o->header_size);
-	    printf("%u bytes are being used to store %u load commands.\n",
+	    printf("Currently %u bytes are being used to store %u load commands.\n",
 		   header->sizeofcmds, header->ncmds);
 	}
     } else {
@@ -349,7 +349,7 @@ static void compute_command_space(mach_o_obj *mach_o)
     if (command_space >= 0) {
 	mach_o->command_space = command_space;
 	if (mach_o->verbose) {
-	    printf("%lu bytes are available for storing load commands.\n\n",
+	    printf("A total of %lu bytes are available for storing load commands.\n\n",
 		   mach_o->command_space);
 	}
     } else {
@@ -708,19 +708,21 @@ static int set_id(mach_o_obj *mach_o, mach_o_command *command, char *idpath)
 static void usage()
 {
     printf("Usage: \n");
-    printf("    mach_o [-v] segments <mach-O file>\n");
-    printf("    mach_o [-v] commands <mach-O file>\n");
-    printf("    mach_o [-v] append <datafile> <mach-O file>\n");
-    printf("    mach_o [-v] add_rpath <library search path> <Mach-O file path>\n");
-    printf("    mach_o [-v] remove_rpath <library search path> <Mach-O file path>\n");
-    printf("    mach_o [-v] set_libpath <library path> <Mach-O file path>\n");
-    printf("    mach_o [-v] set_id <library id path> <Mach-O file path>\n");
+    printf("    mach_o [-v|--verbose] help\n");
+    printf("    mach_o [-v|--verbose] version\n");
+    printf("    mach_o [-v|--verbose] segments <mach-O file>\n");
+    printf("    mach_o [-v|--verbose] commands <mach-O file>\n");
+    printf("    mach_o [-v|--verbose] append <datafile> <mach-O file>\n");
+    printf("    mach_o [-v|--verbose] add_rpath <library dir> <Mach-O file path>\n");
+    printf("    mach_o [-v|--verbose] remove_rpath <library dir> <Mach-O file path>\n");
+    printf("    mach_o [-v|--verbose] set_libpath <library path> <Mach-O file path>\n");
+    printf("    mach_o [-v|--verbose] set_id <library path> <Mach-O file path>\n");
     exit(1);
 }
 
 typedef int (*action_op)(mach_o_obj *mach_o, mach_o_command *command, char *arg);
 
-typedef enum {HELP=1, SEGMENTS, COMMANDS, APPEND, ADD_RPATH, REMOVE_RPATH,
+typedef enum {HELP=1, VERSION, SEGMENTS, COMMANDS, APPEND, ADD_RPATH, REMOVE_RPATH,
 	      EDIT_LIBPATH, SET_ID} action_id;
 
 typedef struct {
@@ -731,6 +733,7 @@ typedef struct {
 
 static mach_o_action actions[] = {
     {.id = HELP, .name = "help", .op = NULL},
+    {.id = VERSION, .name = "version", .op = NULL},
     {.id = COMMANDS, .name = "commands", .op = print_command},
     {.id = SEGMENTS, .name = "segments", .op = print_segment},
     {.id = APPEND, .name = "append", .op = append_data},
@@ -792,6 +795,9 @@ int main(int argc, char **argv)
     case HELP:
 	usage();
 	break;
+    case VERSION:
+	printf("This is version 1.0 of macher.\n");
+	exit(0);
     case APPEND:
     case ADD_RPATH:
     case REMOVE_RPATH:

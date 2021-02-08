@@ -17,19 +17,28 @@ what is available without this option.
 
 Here is a list of the available commands:
 
-segments
-     $ macher [-options] segments <Mach-O file path>
+help
+    $ macher help
 
-     Prints information about each segment in the Mach-O file.  In verbose mode,
-     the sections within each segment are listed, along with byte ranges showing
-     the location of the segment within the file.
+    Prints usage information.
+
+version
+    $ macher version
+
+    Prints the version number.
+
+segments
+    $ macher [-options] segments <Mach-O file path>
+
+    Prints information about each segment in the Mach-O file.  In verbose mode,
+    the sections within each segment are listed.
 
 commands
     $ macher [-options] commands <Mach-O file path>
 
     Prints information about each load command in the Mach-O file.  This
     includes the load commands which define segments.  The verbose mode provides
-    additional details about the command.  This is similar to otool -l but
+    additional details about the commands.  This is similar to otool -l but
     generates output which is more readable and amenable to being parsed by a
     script.
 
@@ -87,4 +96,3 @@ set_id
     LC_ID_DYLIB load command exists only for dylib files.  When another
     executable is linked with the dylib, the linker copies the id into an
     LC_DYLIB command for the executable.
-

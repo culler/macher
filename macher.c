@@ -1,3 +1,16 @@
+/*
+ * Macher is a command line tool for inspecting and modifying Mach-O binary files
+ * as produced by Apple's clang C compiler.
+ *
+ * Copyright © 2021 Marc Culler
+ *
+ * Macher is open source software distributed under a Simplified BSD License.
+ * See the file License.txt included with the source code distribution.
+ *
+ * Compile macher with the command:
+ *     gcc -o macher macher.c
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <getopt.h>
@@ -76,8 +89,9 @@ static void init_mach_o(mach_o_obj *mach_o, char *path, char *mode)
     switch (magic) {
     case FAT_MAGIC:
     case OSSwapInt32(FAT_MAGIC):
-	printf("Fat binaries are not supported.\n"
-	       "Use lipo to split the file into single-architecture binaries.\n");
+	printf("Fat binaries are not supported.  Use\n"
+	       "    lipo <fat file> -thin <arch> -output <thin file>\n"
+	       "to create single-architecture binaries.\n");
 	exit(1);
     case MH_MAGIC_64:
 	mach_o->is_64bit = true;
@@ -123,7 +137,7 @@ static void init_mach_o(mach_o_obj *mach_o, char *path, char *mode)
 	mach_o->command_block_size = header->sizeofcmds;
 	if (mach_o->verbose) {
 	    printf("The Mach-O header occupies %d bytes\n", mach_o->header_size);
-	    printf("There are %u bytes being used to store %u load commands.\n",
+	    printf("%u bytes are being used to store %u load commands.\n",
 		   header->sizeofcmds, header->ncmds);
 	}
     } else {
@@ -139,7 +153,7 @@ static void init_mach_o(mach_o_obj *mach_o, char *path, char *mode)
 	mach_o->num_commands = header->ncmds;
 	mach_o->command_block_size = header->sizeofcmds;
 	if (mach_o->verbose) {
-	    printf("There are %u bytes being used to store %u load commands.\n",
+	    printf("%u bytes are being used to store %u load commands.\n",
 		   header->sizeofcmds, header->ncmds);
 	}
     }
@@ -335,7 +349,7 @@ static void compute_command_space(mach_o_obj *mach_o)
     if (command_space >= 0) {
 	mach_o->command_space = command_space;
 	if (mach_o->verbose) {
-	    printf("There are %lu bytes available for storing load commands.\n\n",
+	    printf("%lu bytes are available for storing load commands.\n\n",
 		   mach_o->command_space);
 	}
     } else {

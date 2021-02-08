@@ -1,5 +1,5 @@
 
-The macher program is licensed under the following simplified BSD license.
+The macher program is licensed under the following Simplified BSD License.
 
 Copyright © 2021 Marc Culler
 

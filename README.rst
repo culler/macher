@@ -79,3 +79,12 @@ edit_libpath
     This is similar to :code:`install_name_tool -change` except that it does not
     require that you provide the existing path to be replaced.  It uses the file
     name of the dylib to decide whether to do the replacement.
+
+set_id
+    $ macher [-options] set_id <dylib id> <Mach-O file path>
+
+    Sets the path in the LC_ID_DYLIB load command to the specified path. The
+    LC_ID_DYLIB load command exists only for dylib files.  When another
+    executable is linked with the dylib, the linker copies the id into an
+    LC_DYLIB command for the executable.
+

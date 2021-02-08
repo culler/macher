@@ -32,6 +32,7 @@ typedef struct {
     FILE *mach_o_file;
     int header_size;
     void *header_data;
+    uint32_t filetype;
     int num_commands;
     int command_block_size;
     unsigned long command_space;
@@ -117,6 +118,7 @@ static void init_mach_o(mach_o_obj *mach_o, char *path, char *mode)
 	if (mach_o->reverse_bytes) {
 	    swap_mach_header_64(header, 0);
 	}
+	mach_o->filetype = header->filetype;
 	mach_o->num_commands = header->ncmds;
 	mach_o->command_block_size = header->sizeofcmds;
 	if (mach_o->verbose) {
@@ -133,6 +135,7 @@ static void init_mach_o(mach_o_obj *mach_o, char *path, char *mode)
 	if (mach_o->reverse_bytes) {
 	    swap_mach_header(header, 0);
 	}
+	mach_o->filetype = header->filetype;
 	mach_o->num_commands = header->ncmds;
 	mach_o->command_block_size = header->sizeofcmds;
 	if (mach_o->verbose) {
@@ -617,6 +620,44 @@ static int remove_rpath(mach_o_obj *mach_o, mach_o_command *command, char *rpath
     return 0;
 }
 
+static void change_dylib_path(mach_o_obj *mach_o, mach_o_command *command, char *path)
+{
+    int index = command - mach_o->commands;
+    struct dylib_command *dc = (struct dylib_command *) command->data;
+    char *old_path = (char *) dc + dc->dylib.name.offset;
+    struct dylib_command *new_command;
+    int old_size = command->lc.cmdsize;
+    int min_size = old_size + strlen(path) - strlen(old_path);
+    int new_size = aligned_command_size(mach_o, min_size);
+    int delta = new_size - old_size;
+    char *tail;
+    int tail_size = mach_o->command_space - command->position - old_size;
+    if (mach_o->command_block_size + delta > mach_o->command_space) {
+	printf("There is not enough space in the file to change the id.\n");
+	exit(1);
+    }
+    tail = malloc(tail_size);
+    fseek(mach_o->mach_o_file, command->position + old_size, SEEK_SET);
+    fread(tail, tail_size, 1, mach_o->mach_o_file);
+    fseek(mach_o->mach_o_file, command->position, SEEK_SET);
+    command->data = calloc(new_size, 1);
+    command->lc.cmdsize = new_size;
+    new_command = (struct dylib_command *) command->data;
+    *new_command = *dc;
+    new_command->cmdsize = new_size;
+    strcpy((char *)new_command + new_command->dylib.name.offset, path);
+    fwrite(command->data, new_size, 1, mach_o->mach_o_file);
+    fwrite(tail, tail_size, 1, mach_o->mach_o_file);
+    free(tail);
+    for (int i = index; i < mach_o->num_commands; i++) {
+	mach_o->commands[i].position += delta;
+    }
+    mach_o->command_block_size += delta;
+    mach_o->command_space -= delta;
+    update_header(mach_o);
+    free(dc);
+}
+	
 static int edit_libpath(mach_o_obj *mach_o, mach_o_command *command, char *libpath)
 {
     char *old_libpath, *old_libname;
@@ -634,6 +675,8 @@ static int edit_libpath(mach_o_obj *mach_o, mach_o_command *command, char *libpa
     old_libpath = (char *) dc + dc->dylib.name.offset;
     old_libname = basename(old_libpath);
     if (strcmp(libname, old_libname) == 0) {
+	change_dylib_path(mach_o, command, libpath);
+#if 0
 	struct dylib_command *new_command;
 	int index = command - mach_o->commands;
 	int old_size = command->lc.cmdsize;
@@ -670,10 +713,20 @@ static int edit_libpath(mach_o_obj *mach_o, mach_o_command *command, char *libpa
 	mach_o->command_space -= delta;
 	update_header(mach_o);
 	free(dc);
+#endif
 	return 1;
     } else {
 	return 0;
     }
+}
+
+static int set_id(mach_o_obj *mach_o, mach_o_command *command, char *idpath)
+{
+    if (command->lc.cmd != LC_ID_DYLIB) {
+	return 0;
+    }
+    change_dylib_path(mach_o, command, idpath);
+    return 1;
 }
 
 static void usage()
@@ -682,13 +735,17 @@ static void usage()
     printf("    mach_o [-v] segments <mach-O file>\n");
     printf("    mach_o [-v] commands <mach-O file>\n");
     printf("    mach_o [-v] append <datafile> <mach-O file>\n");
+    printf("    mach_o [-v] add_rpath <library search path> <Mach-O file path>\n");
+    printf("    mach_o [-v] remove_rpath <library search path> <Mach-O file path>\n");
+    printf("    mach_o [-v] set_libpath <library path> <Mach-O file path>\n");
+    printf("    mach_o [-v] set_id <library id path> <Mach-O file path>\n");
     exit(1);
 }
 
 typedef int (*action_op)(mach_o_obj *mach_o, mach_o_command *command, char *arg);
 
 typedef enum {HELP=1, SEGMENTS, COMMANDS, APPEND, ADD_RPATH, REMOVE_RPATH,
-	      EDIT_LIBPATH} action_id;
+	      EDIT_LIBPATH, SET_ID} action_id;
 
 typedef struct {
     action_id id;
@@ -704,6 +761,7 @@ static mach_o_action actions[] = {
     {.id = ADD_RPATH, .name = "add_rpath", .op = add_rpath},
     {.id = REMOVE_RPATH, .name = "remove_rpath", .op = remove_rpath},
     {.id = EDIT_LIBPATH, .name = "edit_libpath", .op = edit_libpath},
+    {.id = SET_ID, .name = "set_id", .op = set_id},
     {0}
 };
 
@@ -762,6 +820,7 @@ int main(int argc, char **argv)
     case ADD_RPATH:
     case REMOVE_RPATH:
     case EDIT_LIBPATH:
+    case SET_ID:
 	if (argc != optind + 2) {
 	    usage();
 	}
@@ -787,6 +846,11 @@ int main(int argc, char **argv)
 	printf("No RPATH load command for %s exists.\n", action_arg);
 	exit(1);
     }
+    if ((action.id == SET_ID) && (mach_o.filetype != MH_DYLIB)) {
+	printf("The dylib id can only be set for a dylib file.\n");
+	exit(1);
+    }
+
     if (action.op) {
 	for (int i = 0; i < mach_o.num_commands; i++) {
 	    if (action.op(&mach_o, mach_o.commands + i, action_arg)) {

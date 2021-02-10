@@ -7,8 +7,6 @@
  * Macher is open source software distributed under a Simplified BSD License.
  * See the file License.txt included with the source code distribution.
  *
- * Compile macher with the command:
- *     gcc -o macher macher.c
  */
 
 #include <stdio.h>
@@ -61,11 +59,12 @@ static void remove_command(mach_o_obj *mach_o, int index);
 static void init_mach_o(mach_o_obj *mach_o, char *path, char *mode);
 static void destroy_mach_o(mach_o_obj *mach_o);
 static void usage();
+extern void append_data(char *mach_path, char *data_path, char *output_path);
 
 /* actions */
 static int print_command(mach_o_obj *mach_o, mach_o_command *command, char *arg);
 static int print_segment(mach_o_obj *mach_o, mach_o_command *command, char *arg);
-static int append_data(mach_o_obj *mach_o, mach_o_command *command, char *data_path);
+static int XXappend_data(mach_o_obj *mach_o, mach_o_command *command, char *data_path);
 static int add_rpath(mach_o_obj *mach_o, mach_o_command *command, char *rpath);
 static int remove_rpath(mach_o_obj *mach_o, mach_o_command *command, char *rpath);
 static int edit_libpath(mach_o_obj *mach_o, mach_o_command *command, char *libpath);
@@ -518,7 +517,7 @@ static int print_segment(mach_o_obj *mach_o, mach_o_command *command, char *arg)
     return 0;
 }
 
-static int append_data(mach_o_obj *mach_o, mach_o_command *command, char *data_path)
+static int XXappend_data(mach_o_obj *mach_o, mach_o_command *command, char *data_path)
 {
     /*
      * When appending data we need to change values in two of the load commands but
@@ -712,7 +711,7 @@ static void usage()
     printf("    mach_o [-v|--verbose] version\n");
     printf("    mach_o [-v|--verbose] segments <mach-O file>\n");
     printf("    mach_o [-v|--verbose] commands <mach-O file>\n");
-    printf("    mach_o [-v|--verbose] append <datafile> <mach-O file>\n");
+    printf("    mach_o [-v|--verbose] append <mach-O file> <data file> <output>\n");
     printf("    mach_o [-v|--verbose] add_rpath <library dir> <Mach-O file path>\n");
     printf("    mach_o [-v|--verbose] remove_rpath <library dir> <Mach-O file path>\n");
     printf("    mach_o [-v|--verbose] set_libpath <library path> <Mach-O file path>\n");
@@ -736,7 +735,7 @@ static mach_o_action actions[] = {
     {.id = VERSION, .name = "version", .op = NULL},
     {.id = COMMANDS, .name = "commands", .op = print_command},
     {.id = SEGMENTS, .name = "segments", .op = print_segment},
-    {.id = APPEND, .name = "append", .op = append_data},
+    {.id = APPEND, .name = "append", .op = NULL},
     {.id = ADD_RPATH, .name = "add_rpath", .op = add_rpath},
     {.id = REMOVE_RPATH, .name = "remove_rpath", .op = remove_rpath},
     {.id = EDIT_LIBPATH, .name = "edit_libpath", .op = edit_libpath},
@@ -752,7 +751,7 @@ int main(int argc, char **argv)
     int option_index = 0;
     char *command;
     mach_o_action action = {0};
-    char *mode, *mach_o_file, *action_arg;
+    char *mode, *mach_path, *data_path, *output_path, *action_arg;
 
     while (1) {
     int c;
@@ -799,6 +798,14 @@ int main(int argc, char **argv)
 	printf("This is version 1.0 of macher.\n");
 	exit(0);
     case APPEND:
+	if (argc != optind + 3) {
+	    usage();
+	}
+	mach_path = argv[optind++];
+	data_path = argv[optind++];
+	output_path = argv[optind];
+	append_data(mach_path, data_path, output_path);
+	return 0;
     case ADD_RPATH:
     case REMOVE_RPATH:
     case EDIT_LIBPATH:
@@ -808,18 +815,18 @@ int main(int argc, char **argv)
 	}
 	mode = "r+";
 	action_arg = argv[optind++];
-	mach_o_file = argv[optind];
+	mach_path = argv[optind];
 	break;
     default:
 	if (argc != optind + 1) {
 	    usage();
 	}
 	mode = "r";
-	mach_o_file = argv[optind];
+	mach_path = argv[optind];
 	action_arg = NULL;
 	break;
     }
-    init_mach_o(&mach_o, mach_o_file, mode);
+    init_mach_o(&mach_o, mach_path, mode);
     if ((action.id == ADD_RPATH) && find_rpath(&mach_o, action_arg)) {
 	printf("An RPATH load command for %s already exists.\n", action_arg);
 	exit(1);

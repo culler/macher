@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #include <sys/stat.h>
 #include <stdio.h>
+#include <errno.h>
 #include <string.h>
 #include <mach-o/arch.h>
 #include <mach-o/fat.h>
@@ -45,14 +46,16 @@ void append_data(
 
     mach = fopen(mach_path, "r");
     if (! mach) {
-	printf("Could not open the Mach-O file %s\n", mach_path);
+	printf("Could not open the Mach-O file %s: %s\n", mach_path,
+	       strerror(errno));
 	exit(1);
     }
     stat(mach_path, &st);
     mach_size = st.st_size;
     data = fopen(data_path, "r");
     if (! data) {
-	printf("Could not open the data file %s\n", data_path);
+	printf("Could not open the data file %s: %s\n", data_path,
+	       strerror(errno));
 	exit(1);
     }
     stat(data_path, &st);
@@ -141,7 +144,7 @@ void append_data(
      */
     struct fat_arch data_arch = {
 	.cputype = CPU_TYPE_ANY,
-	.cpusubtype = 0,
+	.cpusubtype = CPU_SUBTYPE_ANY,
 	.offset = fathead_size + fathead_padding + mach_size - ftell(mach),
 	.size = data_size,
 	.align = 0
@@ -153,9 +156,10 @@ void append_data(
      * serialized in bigendian order.
      */
     int num_archs = fathead.nfat_arch;
-    output = fopen(output_path, "r+");
+    output = fopen(output_path, "w");
     if (!output) {
-	printf("Could not open output file %s\n", output_path);
+	printf("Could not open output file %s: %s\n", output_path,
+	       strerror(errno));
 	exit(1);
     }
     swap_fat_arch(archs, num_archs, NX_BigEndian);
@@ -184,7 +188,7 @@ void append_data(
     struct mach_header datahead = {
         .magic = MH_MAGIC,
 	.cputype = CPU_TYPE_ANY,
-	.cpusubtype = 0,
+	.cpusubtype = CPU_SUBTYPE_ANY,
         .filetype = MH_OBJECT,
         .ncmds = 0,
         .sizeofcmds = 0,

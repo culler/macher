@@ -160,8 +160,8 @@ static void init_mach_o(mach_o_obj *mach_o, char *path, char *mode)
      * Copy all of the load commands into memory.  We may add at most one new
      * command, so we allocate space for one extra.
      */
-    mach_o->commands = (mach_o_command *) malloc(
-	sizeof(mach_o_command) * (1 + mach_o->num_commands));
+    mach_o->commands = (mach_o_command *) calloc(1 + mach_o->num_commands,
+						 sizeof(mach_o_command));
     fseek(mach_o->mach_o_file, mach_o->header_size, SEEK_SET);
     for (int i = 0; i < mach_o->num_commands; i++) {
 	long pos = ftell(mach_o->mach_o_file);
@@ -189,11 +189,12 @@ static void destroy_mach_o(mach_o_obj *mach_o)
     for (int i = 0; i < mach_o->num_commands; i++) {
 	mach_o_command *command = mach_o->commands + i;
 	free(command->data);
+	command->data = NULL;
     }
-    free(mach_o->header_data);
-    mach_o->header_data = NULL;
     free(mach_o->commands);
     mach_o->commands = NULL;
+    free(mach_o->header_data);
+    mach_o->header_data = NULL;
     fclose(mach_o->mach_o_file);
 }
 
@@ -290,20 +291,21 @@ static void remove_command(mach_o_obj *mach_o, int index)
     mach_o_command *command = mach_o->commands + index;
     int command_size = command->lc.cmdsize;
     int tail_size = mach_o->command_space - command->position - command_size;
-    char *buffer = malloc(tail_size);
+    char *tail = malloc(tail_size);
     char null = '\0';
     fseek(mach_o->mach_o_file, command->position + command_size, SEEK_SET);
-    fread(buffer, tail_size, 1, mach_o->mach_o_file);
+    fread(tail, tail_size, 1, mach_o->mach_o_file);
     fseek(mach_o->mach_o_file, command->position, SEEK_SET);
-    fwrite(buffer, tail_size, 1, mach_o->mach_o_file);
+    fwrite(tail, tail_size, 1, mach_o->mach_o_file);
     fwrite(&null, 1, command_size, mach_o->mach_o_file);
-    free(command->data);
+    free(tail);
     for (int i = index; i < mach_o->num_commands - 1; i++) {
 	mach_o->commands[i] = mach_o->commands[i + 1];
     }
     mach_o->num_commands -= 1;
     mach_o->command_block_size -= command_size;
     mach_o->command_space += command_size;
+    free(command->data);
     update_header(mach_o);
 }
 
@@ -668,7 +670,7 @@ static void change_dylib_path(mach_o_obj *mach_o, mach_o_command *command, char 
     mach_o->command_block_size += delta;
     mach_o->command_space -= delta;
     update_header(mach_o);
-    free(dc);
+    free(command->data);
 }
 	
 static int edit_libpath(mach_o_obj *mach_o, mach_o_command *command, char *libpath)

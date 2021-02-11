@@ -8,6 +8,7 @@
  * See the file License.txt included with the source code distribution.
  *
  */
+#define MACHER_VERSION "1.1"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -727,7 +728,7 @@ int main(int argc, char **argv)
 	usage();
 	break;
     case VERSION:
-	printf("This is version 1.0 of macher.\n");
+	printf("This is version %s of macher.\n", MACHER_VERSION);
 	exit(0);
     case APPEND:
 	if (argc != optind + 3) {

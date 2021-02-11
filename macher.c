@@ -64,7 +64,6 @@ extern void append_data(char *mach_path, char *data_path, char *output_path);
 /* actions */
 static int print_command(mach_o_obj *mach_o, mach_o_command *command, char *arg);
 static int print_segment(mach_o_obj *mach_o, mach_o_command *command, char *arg);
-static int XXappend_data(mach_o_obj *mach_o, mach_o_command *command, char *data_path);
 static int add_rpath(mach_o_obj *mach_o, mach_o_command *command, char *rpath);
 static int remove_rpath(mach_o_obj *mach_o, mach_o_command *command, char *rpath);
 static int edit_libpath(mach_o_obj *mach_o, mach_o_command *command, char *libpath);
@@ -105,8 +104,8 @@ static void init_mach_o(mach_o_obj *mach_o, char *path, char *mode)
 	mach_o->reverse_bytes = true;
 	break;
     case OSSwapInt32(MH_MAGIC):
-	mach_o->is_64bit = true;
-	mach_o->reverse_bytes = false;
+	mach_o->is_64bit = false;
+	mach_o->reverse_bytes = true;
 	break;
     default:
 	printf("error: The binary is not a mach-O file.\n");
@@ -515,75 +514,6 @@ static int print_segment(mach_o_obj *mach_o, mach_o_command *command, char *arg)
 {
     if (command->lc.cmd == LC_SEGMENT || command->lc.cmd == LC_SEGMENT_64) {
 	print_command(mach_o, command, arg);
-    }
-    return 0;
-}
-
-static int XXappend_data(mach_o_obj *mach_o, mach_o_command *command, char *data_path)
-{
-    /*
-     * When appending data we need to change values in two of the load commands but
-     * the size of the commands does not change.  So we just overwrite the commands
-     * in the file and then append the data.
-     */
-    struct stat st;
-    unsigned long data_size;
-    FILE *mach_o_file, *data_file;
-
-    if (stat(data_path, &st)) {
-	printf("Could not find data file %s.\n", data_path);
-	exit(1);
-    }
-    data_size = st.st_size;
-    switch (command->lc.cmd & ~LC_REQ_DYLD) {
-    case LC_SEGMENT:
-	{
-	    struct segment_command *segment = (struct segment_command *) command->data;
-	    if (!strcmp(segment->segname, "__LINKEDIT")) {
-		if (mach_o->verbose) {
-		    printf("Extending linkedit segment by %lu bytes.\n", data_size);
-		}
-		segment->filesize += data_size;
-	    }
-	    break;
-	}
-    case LC_SEGMENT_64:
-	{
-	    struct segment_command_64 *segment = (struct segment_command_64 *) command->data;
-	    if (!strcmp(segment->segname, "__LINKEDIT")) {
-		if (mach_o->verbose) {
-		    printf("Extending linkedit segment by %lu bytes.\n", data_size);
-		}
-		segment->filesize += data_size;
-		fseek(mach_o->mach_o_file, command->position, SEEK_SET);
-		int n = fwrite(command->data, command->lc.cmdsize, 1, mach_o->mach_o_file);
-	    }
-	    break;
-	}
-    case LC_SYMTAB:
-	{
-	    char buffer[512];
-	    FILE *data_file;
-	    int count = 0;
-	    struct symtab_command *symtab = (struct symtab_command *) command->data;
-	    if (mach_o->verbose) {
-		printf("Extending symtab string block by %lu bytes.\n", data_size);
-	    }
-	    symtab->strsize += data_size;
-	    fseek(mach_o->mach_o_file, command->position, SEEK_SET);
-	    fwrite(command->data, command->lc.cmdsize, 1, mach_o->mach_o_file);
-	    if (mach_o->verbose) {
-		printf("Appending %lu bytes of data.\n", data_size);
-	    }
-	    fclose(mach_o->mach_o_file);
-	    mach_o->mach_o_file = fopen(mach_o->path, "a");
-	    data_file = fopen(data_path, "r");
-	    while (!feof(data_file)) {
-		count = fread(buffer, 1, 512, data_file);
-		fwrite(buffer, count, 1L, mach_o->mach_o_file);
-	    }
-	    fclose(data_file);
-	}
     }
     return 0;
 }

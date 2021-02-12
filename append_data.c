@@ -102,9 +102,9 @@ void append_data(
 	fathead.nfat_arch = 2;
 	archs = (struct fat_arch *) calloc(fathead.nfat_arch, sizeof(struct fat_arch));
 	fathead_size = sizeof(fathead) + fathead.nfat_arch * sizeof(struct fat_arch);
-	fathead_padding = ((fathead_size + 0x3ffe) & 0x3fff) - fathead_size;
+	fathead_padding = ((fathead_size + 0x3fff) & ~0x3fff) - fathead_size;
 	if (fathead_padding < 0) {
-	    fathead_padding += 16384;
+	    fathead_padding += 0x4000;
 	}
 	struct fat_arch arch = {
 	    .cputype = cputype,

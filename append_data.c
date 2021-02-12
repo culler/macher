@@ -29,19 +29,22 @@
  * offsets within the archive to account for the prepended binary. 
  */
 
+static char zero = 0;
+
 void append_data(
     char *mach_path,
     char *data_path,
     char *output_path)
 {
     struct mach_header header = {0};
+    struct mach_header_64 header_64 = {0};
     struct fat_header fathead = {0};
     struct fat_arch *archs;
     struct stat st;
     char buffer[512];
     FILE *data, *mach, *output;
     int fathead_size, fathead_padding, mach_size, data_size;
-    uint32_t magic;
+    uint32_t magic, cputype, cpusubtype;
     bool isfat = false;
 
     mach = fopen(mach_path, "r");
@@ -74,10 +77,16 @@ void append_data(
 	break;
     case MH_MAGIC_64:
     case OSSwapInt32(MH_MAGIC_64):
+	fseek(mach, 0, SEEK_SET);
+	fread(&header_64, sizeof(struct mach_header_64), 1, mach);
+	cputype = header_64.cputype;
+	cpusubtype = header_64.cpusubtype;
     case MH_MAGIC:
     case OSSwapInt32(MH_MAGIC):
+	fseek(mach, 0, SEEK_SET);
 	fread(&header, sizeof(struct mach_header), 1, mach);
-	swap_mach_header(&header, 0);  /* Convert to native endianness. */
+	cputype = header.cputype;
+	cpusubtype = header.cpusubtype;
     break;
     default:
 	printf("error: %s is not a mach-O file.\n", mach_path);
@@ -94,9 +103,12 @@ void append_data(
 	archs = (struct fat_arch *) calloc(fathead.nfat_arch, sizeof(struct fat_arch));
 	fathead_size = sizeof(fathead) + fathead.nfat_arch * sizeof(struct fat_arch);
 	fathead_padding = ((fathead_size + 0x3ffe) & 0x3fff) - fathead_size;
+	if (fathead_padding < 0) {
+	    fathead_padding += 16384;
+	}
 	struct fat_arch arch = {
-	    .cputype = header.cputype,
-	    .cpusubtype = header.cpusubtype,
+	    .cputype = cputype,
+	    .cpusubtype = cpusubtype,
 	    .offset = fathead_size + fathead_padding,
 	    .size = mach_size,
 	    .align = 14
@@ -130,7 +142,7 @@ void append_data(
 	    fathead_padding += 16384;
 	    swap_fat_arch(archs, fathead.nfat_arch - 1, 0);
 	    for(int i = 0; i < fathead.nfat_arch - 1; i++) {
-		archs[i].offset += 16484;
+		archs[i].offset += 16384;
 	    }
 	    swap_fat_arch(archs, fathead.nfat_arch - 1, 0);
 	}
@@ -166,12 +178,7 @@ void append_data(
     swap_fat_header(&fathead, NX_BigEndian);
     fwrite(&fathead, sizeof(struct fat_header), 1, output);
     fwrite(archs, sizeof(struct fat_arch), num_archs, output);
-    /*
-     * Hack to work around segfaults that occur when calling fwrite
-     * with a pointer to a zero byte, using size 1 and a large count.
-     */
-    char *padding = calloc(fathead_padding, 1);
-    fwrite(padding, fathead_padding, 1, output);
+    fwrite(&zero, 1, fathead_padding, output);
     /*
      * Copy the Mach-O file.  Note: we left the file position at the start of
      * the first mach header.

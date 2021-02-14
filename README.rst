@@ -43,23 +43,22 @@ commands
     script.
 
 append
-    $ macher [-options] append <data file path> <Mach-O file path>
+    $ macher [-options] append <Mach-O file path> <data file path> <output path>
 
-    Appends arbitrary data to the end of the Mach-O file and alters both the
-    load command for the __LINKEDIT segment and the LC_SYMTAB load command,
-    making the extra data become part of the string data block which appears at
-    the end of the __LINKEDIT segment.  The __LINKEDIT segment is the last
-    segment in the file and is required to extend to the end of the file.
+    Creates a fat binary by adding a new slice containing arbitrary data at the
+    end of a Mach-O file.  The new slice is tagged for the "any" architecture
+    and is guaranteed to be the last slice in the fat binary.
 
     The main purpose of this command is to make it possible to produce a Zip
-    self-extracting archive, by appending a Zip file to the end of a Mach-O
-    binary file, without creating an invalid Mach-O binary file.  Simply
-    appending the Zip file without modifying the load commands corrupts the
-    Mach-O structure by causing the __LINKEDIT segment not to extend to the
-    end of the file as required.
+    self-extracting archive without creating an invalid Mach-O binary file.  Simply
+    appending a Zip file to the end of a thin or fat binary corrupts the Mach-O
+    structure by causing the __LINKEDIT segment of the last slice not to extend
+    to the end of the file as required.
 
     After appending a Zip file, the :code:`zip -A` command should be used to
-    adjust the offset tables within the Zip data.
+    adjust the offset tables within the Zip data.  After doing this, the files
+    in the zip archive can be exracted by calling :code:`unzip` as if the fat
+    binary were an ordinary zip archive.
 
 add_rpath
     $ macher [-options] add_rpath <library search path> <Mach-O file path>

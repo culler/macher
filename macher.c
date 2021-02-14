@@ -8,7 +8,7 @@
  * See the file License.txt included with the source code distribution.
  *
  */
-#define MACHER_VERSION "1.2"
+#define MACHER_VERSION "1.3"
 
 #include <stdio.h>
 #include <stdlib.h>

@@ -52,16 +52,14 @@ typedef struct slice {
     mach_o_command *commands;
 } *Slice;
 
+static Slice slice_init(FILE *mach_o_file, int offset, bool verbose);
+static void  slice_destroy(Slice slice);
 static void  swap_data_bytes(Slice slice, mach_o_command *command);
 static int   aligned_command_size(Slice slice, int min_size);
 static void  update_header(Slice slice);
 static void  compute_command_space(Slice slice);
 static bool  find_rpath(Slice slice, char *rpath);
 static void  remove_command(Slice slice, int index);
-static Slice slice_init(FILE *mach_o_file, int offset, bool verbose);
-static void  slice_destroy(Slice slice);
-static void  usage();
-extern void  append_data(char *mach_path, char *data_path, char *output_path);
 
 typedef struct macho {
     bool verbose;
@@ -74,6 +72,7 @@ typedef struct macho {
 
 static MachO macho_init(char *mach_o_path, char *mode, bool verbose);
 static void macho_destroy(MachO mach_o);
+static void show_slice_info(MachO mach_o, int index);
 
 /* actions */
 static int print_command(Slice slice, mach_o_command *command, char *arg);
@@ -81,6 +80,9 @@ static int print_segment(Slice slice, mach_o_command *command, char *arg);
 static int add_rpath(Slice slice, mach_o_command *command, char *rpath);
 static int remove_rpath(Slice slice, mach_o_command *command, char *rpath);
 static int edit_libpath(Slice slice, mach_o_command *command, char *libpath);
+
+static void  usage();
+extern void  append_data(char *mach_path, char *data_path, char *output_path);
 
 static Slice slice_init(FILE *mach_o_file, int offset, bool verbose)
 {
@@ -844,27 +846,27 @@ int main(int argc, char **argv)
     }
     mach_o = macho_init(mach_path, mode, verbose_flag);
     for (int i = 0; i < mach_o->num_archs; i++) {
-    slice = mach_o->slices[i];
-    show_slice_info(mach_o, i);
-    if ((action.id == ADD_RPATH) && find_rpath(slice, action_arg)) {
-	printf("An RPATH load command for %s already exists.\n", action_arg);
-	continue;
-    }
-    if ((action.id == REMOVE_RPATH) && !find_rpath(slice, action_arg)) {
-	printf("No RPATH load command for %s exists.\n", action_arg);
-	continue;
-    }
-    if ((action.id == SET_ID) && (slice->filetype != MH_DYLIB)) {
-	printf("The dylib id can only be set for a dylib file.\n");
-	continue;
-    }
-    if (action.op) {
-	for (int i = 0; i < slice->num_commands; i++) {
-	    if (action.op(slice, slice->commands + i, action_arg)) {
-		break;
+	slice = mach_o->slices[i];
+	show_slice_info(mach_o, i);
+	if ((action.id == ADD_RPATH) && find_rpath(slice, action_arg)) {
+	    printf("An RPATH load command for %s already exists.\n", action_arg);
+	    continue;
+	}
+	if ((action.id == REMOVE_RPATH) && !find_rpath(slice, action_arg)) {
+	    printf("No RPATH load command for %s exists.\n", action_arg);
+	    continue;
+	}
+	if ((action.id == SET_ID) && (slice->filetype != MH_DYLIB)) {
+	    printf("The dylib id can only be set for a dylib file.\n");
+	    continue;
+	}
+	if (action.op) {
+	    for (int i = 0; i < slice->num_commands; i++) {
+		if (action.op(slice, slice->commands + i, action_arg)) {
+		    break;
+		}
 	    }
 	}
-    }
     }
     macho_destroy(mach_o);
     return 0;

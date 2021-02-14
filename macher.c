@@ -378,19 +378,19 @@ static int print_command(Slice slice, mach_o_command *command, char *arg)
 	{
 	    struct segment_command *seg =
 		(struct segment_command *)command->data;
-	    printf("LC_SEGMENT %s [%u : %u]\n", seg->segname, seg->fileoff,
+	    printf("    LC_SEGMENT %s [%u : %u]\n", seg->segname, seg->fileoff,
 		   seg->fileoff + seg->filesize);
 	    if (slice->verbose) {
 		struct section *section = (struct section *)
 		    ((char *)seg + sizeof(struct segment_command));
 		if(seg->nsects != 0){
 		    for(int i = 0; i < seg->nsects; i++){
-			printf("    Section %s [%u : %u ]\n", section->sectname,
+			printf("        Section %s [%u : %u ]\n", section->sectname,
 			       section->offset, section->offset + section->size);
 			section++;
 		    }
 		} else {
-		    printf("    No sections\n");
+		    printf("        No sections\n");
 		}
 	    }
 	}
@@ -399,19 +399,19 @@ static int print_command(Slice slice, mach_o_command *command, char *arg)
 	{
 	    struct segment_command_64 *seg = (struct segment_command_64 *)
 		command->data;
-	    printf("LC_SEGMENT_64 %s [%llu : %llu]\n", seg->segname, seg->fileoff,
+	    printf("    LC_SEGMENT_64 %s [%llu : %llu]\n", seg->segname, seg->fileoff,
 		   seg-> fileoff + seg->filesize);
 	    if (slice->verbose) {
 		struct section_64 *section = (struct section_64 *)
 		    ((char *)seg + sizeof(struct segment_command_64));
 		if(seg->nsects != 0){
 		    for(int i = 0; i < seg->nsects; i++){
-			printf("    Section %s [%u : %llu ]\n", section->sectname,
+			printf("        Section %s [%u : %llu ]\n", section->sectname,
 			       section->offset, section->offset + section->size);
 			section++;
 		    }
 		} else {
-		    printf("    No sections\n");
+		    printf("        No sections\n");
 		}
 	    }
 	}
@@ -419,14 +419,14 @@ static int print_command(Slice slice, mach_o_command *command, char *arg)
     case LC_ID_DYLIB:
 	{
 	    struct dylib_command *dl = (struct dylib_command *)command->data;
-	    printf("LC_ID_DYLIB: %s\n",
+	    printf("    LC_ID_DYLIB: %s\n",
 		   (char *)command->data + dl->dylib.name.offset);
 	}
 	break;
     case LC_LOAD_DYLIB:
 	{
 	    struct dylib_command *dl = (struct dylib_command *)command->data;
-	    printf("LC_LOAD_DYLIB: %s\n",
+	    printf("    LC_LOAD_DYLIB: %s\n",
 		   (char *) command->data + dl->dylib.name.offset);
 	}
 	break;
@@ -436,13 +436,13 @@ static int print_command(Slice slice, mach_o_command *command, char *arg)
 	    char uuid[37];
 	    uuid[0] = '\0';
 	    uuid_unparse(uu->uuid, uuid);
-	    printf("LC_UUID: %s\n", uuid);
+	    printf("    LC_UUID: %s\n", uuid);
 	}
 	break;
     case LC_SYMTAB:
 	{
 	    struct symtab_command *tab = (struct symtab_command *)command->data;
-	    printf("LC_SYMTAB: offset is %d, %u symbols, strings in [%d : %d]\n",
+	    printf("    LC_SYMTAB: offset is %d, %u symbols, strings in [%d : %d]\n",
 		   tab->symoff, tab->nsyms, tab->stroff,
 		   tab->stroff + tab->strsize);
 	}
@@ -450,12 +450,12 @@ static int print_command(Slice slice, mach_o_command *command, char *arg)
     case LC_RPATH & ~LC_REQ_DYLD:
 	{
 	    struct rpath_command *rp = (struct rpath_command *)command->data;
-	    printf("LC_RPATH: %s\n", (char *) rp + rp->path.offset);
+	    printf("    LC_RPATH: %s\n", (char *) rp + rp->path.offset);
 	}
 	break;
     case LC_DYLD_INFO:
 	{
-	    printf("%s%s\n", "LC_DYLD_INFO",
+	    printf("%s%s\n", "    LC_DYLD_INFO",
 		   (command->lc.cmd & LC_REQ_DYLD) != 0 ? "_ONLY" : "");
 	}
 	break;
@@ -465,7 +465,7 @@ static int print_command(Slice slice, mach_o_command *command, char *arg)
 		(struct build_version_command *)command->data;
 	    int min = version->minos;
 	    int sdk = version->sdk;
-	    printf("LC_BUILD_VERSION: min = %d.%d.%d, sdk = %d.%d.%d\n",
+	    printf("    LC_BUILD_VERSION: min = %d.%d.%d, sdk = %d.%d.%d\n",
 		   MAJOR(min), MINOR(min), PATCH(min), MAJOR(sdk), MINOR(sdk),
 		   PATCH(sdk));
 	}
@@ -481,8 +481,8 @@ static int print_command(Slice slice, mach_o_command *command, char *arg)
 		packed = packed >> 10;
 	    }
 	    parts[4] = packed;
-	    printf("LC_SOURCE_VERSION: %d.%d.%d.%d.%d\n", parts[4], parts[3], parts[2],
-		   parts[1], parts[0]);
+	    printf("    LC_SOURCE_VERSION: %d.%d.%d.%d.%d\n" , parts[4],
+		   parts[3], parts[2], parts[1], parts[0]);
 	}
 	break;
     case LC_VERSION_MIN_MACOSX:
@@ -491,14 +491,14 @@ static int print_command(Slice slice, mach_o_command *command, char *arg)
 		(struct version_min_command *)command->data;
 	    int min = version->version;
 	    int sdk = version->sdk;
-	    printf("LC_VERSION_MIN_MACOSX: min = %d.%d.%d, sdk = %d.%d.%d\n",
+	    printf("    LC_VERSION_MIN_MACOSX: min = %d.%d.%d, sdk = %d.%d.%d\n",
 		   MAJOR(min), MINOR(min), PATCH(min), MAJOR(sdk), MINOR(sdk),
 		   PATCH(sdk));
 	}
 	break;
     default:
 	if (command_id < num_load_commands) {
-	    printf("%s\n", load_command_names[command_id]);
+	    printf("    %s\n", load_command_names[command_id]);
 	} else {
 	    printf("Invalid command id %d.\n", command_id);
 	    exit(1);
@@ -697,16 +697,17 @@ static MachO macho_init(char *mach_o_path, char *mode, bool verbose){
 
 static void show_slice_info(MachO mach_o, int index) {
     if (index >= mach_o->num_archs) {
-	return;
+	fprintf(stderr, "Index overflow in show_slice_info\n");
+	exit(1);
     }
     Slice slice = mach_o->slices[index];
+    printf("\nSlice %d (for architecture %s):\n", index, slice->info->name);
     if (slice->verbose) {
-	printf("\nSlice %d:\n", index);
-	printf("    Architecture: %s\n", slice->info->name);
-	printf("    Offset: %d\n", slice->offset);
-	printf("    Space used for load commands: %d bytes (%u load commands)\n",
+	printf("Offset: %d\n", slice->offset);
+	printf("Space used for load commands: %d bytes (%u load commands)\n",
 	       slice->command_block_size, slice->num_commands);
-	printf("    Total space available: %lu bytes\n\n", slice->command_space);
+	printf("Space available for load commands: %lu bytes\n\n",
+	       slice->command_space);
     }
 }
 

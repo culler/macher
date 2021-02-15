@@ -186,8 +186,10 @@ static void slice_destroy(Slice slice)
 {
     for (int i = 0; i < slice->num_commands; i++) {
 	mach_o_command *command = slice->commands + i;
-	free(command->data);
-	command->data = NULL;
+	if (command->data) {
+	    free(command->data);
+	    command->data = NULL;
+	}
     }
     if (slice->info) {
 	NXFreeArchInfo(slice->info);
@@ -569,12 +571,13 @@ static void change_dylib_path(Slice slice, mach_o_command *command, char *path)
     struct dylib_command *dc = (struct dylib_command *) command->data;
     char *old_path = (char *) dc + dc->dylib.name.offset;
     struct dylib_command *new_command;
-    int old_size = command->lc.cmdsize;
-    int min_size = old_size + strlen(path) - strlen(old_path);
-    int new_size = aligned_command_size(slice, min_size);
+    unsigned int old_size = command->lc.cmdsize;
+    unsigned int min_size = old_size + strlen(path) - strlen(old_path);
+    unsigned int new_size = aligned_command_size(slice, min_size);
     int delta = new_size - old_size;
     char *tail;
-    int tail_size = slice->command_space - command->position - old_size;
+    unsigned int tail_size = slice->offset + slice->command_space -
+	command->position - old_size;
     if (slice->command_block_size + delta > slice->command_space) {
 	printf("There is not enough space in the file to change the id.\n");
 	exit(1);
@@ -590,7 +593,7 @@ static void change_dylib_path(Slice slice, mach_o_command *command, char *path)
     new_command->cmdsize = new_size;
     strcpy((char *)new_command + new_command->dylib.name.offset, path);
     fwrite(command->data, new_size, 1, slice->mach_o_file);
-    fwrite(tail, tail_size, 1, slice->mach_o_file);
+    int answer = fwrite(tail, tail_size, 1, slice->mach_o_file);
     free(tail);
     for (int i = index; i < slice->num_commands; i++) {
 	slice->commands[i].position += delta;
@@ -599,6 +602,7 @@ static void change_dylib_path(Slice slice, mach_o_command *command, char *path)
     slice->command_space -= delta;
     update_header(slice);
     free(command->data);
+    command->data = NULL;
 }
 	
 static int edit_libpath(Slice slice, mach_o_command *command, char *libpath)

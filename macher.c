@@ -739,7 +739,7 @@ static void usage()
     printf("    mach_o [-v|--verbose] append <mach-O file> <data file> <output>\n");
     printf("    mach_o [-v|--verbose] add_rpath <library dir> <Mach-O file path>\n");
     printf("    mach_o [-v|--verbose] remove_rpath <library dir> <Mach-O file path>\n");
-    printf("    mach_o [-v|--verbose] set_libpath <library path> <Mach-O file path>\n");
+    printf("    mach_o [-v|--verbose] edit_libpath <library path> <Mach-O file path>\n");
     printf("    mach_o [-v|--verbose] set_id <library path> <Mach-O file path>\n");
     exit(1);
 }

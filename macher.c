@@ -75,11 +75,11 @@ static void macho_destroy(MachO mach_o);
 static void show_slice_info(MachO mach_o, int index);
 
 /* actions */
-static int print_command(Slice slice, mach_o_command *command, char *arg);
-static int print_segment(Slice slice, mach_o_command *command, char *arg);
-static int add_rpath(Slice slice, mach_o_command *command, char *rpath);
-static int remove_rpath(Slice slice, mach_o_command *command, char *rpath);
-static int edit_libpath(Slice slice, mach_o_command *command, char *libpath);
+static int print_command(Slice slice, mach_o_command *command, char **args);
+static int print_segment(Slice slice, mach_o_command *command, char **args);
+static int add_rpath(Slice slice, mach_o_command *command, char **args);
+static int remove_rpath(Slice slice, mach_o_command *command, char **args);
+static int edit_libpath(Slice slice, mach_o_command *command, char **args);
 
 static void  usage();
 extern void  append_data(char *mach_path, char *data_path, char *output_path);
@@ -372,7 +372,7 @@ static bool find_rpath(Slice slice, char *rpath)
     return false;
 }
 
-static int print_command(Slice slice, mach_o_command *command, char *arg)
+static int print_command(Slice slice, mach_o_command *command, char **args)
 {
     int command_id = command->lc.cmd & ~LC_REQ_DYLD;
     switch (command_id) {
@@ -510,16 +510,17 @@ static int print_command(Slice slice, mach_o_command *command, char *arg)
     return 0;
 }
 
-static int print_segment(Slice slice, mach_o_command *command, char *arg)
+static int print_segment(Slice slice, mach_o_command *command, char **args)
 {
     if (command->lc.cmd == LC_SEGMENT || command->lc.cmd == LC_SEGMENT_64) {
-	print_command(slice, command, arg);
+	print_command(slice, command, args);
     }
     return 0;
 }
 
-static int add_rpath(Slice slice, mach_o_command *command, char *rpath)
+static int add_rpath(Slice slice, mach_o_command *command, char **args)
 {
+    char *rpath = args[0];
     mach_o_command *mc = slice->commands + slice->num_commands;
     struct rpath_command *rc;
     int min_size = sizeof(struct rpath_command) + strlen(rpath) + 1;
@@ -550,8 +551,9 @@ static int add_rpath(Slice slice, mach_o_command *command, char *rpath)
     return 1;
 }
 
-static int remove_rpath(Slice slice, mach_o_command *command, char *rpath)
+static int remove_rpath(Slice slice, mach_o_command *command, char **args)
 {
+    char *rpath = args[0];
     if (command->lc.cmd == LC_RPATH) {
 	struct rpath_command *rp = (struct rpath_command *) command->data;
 	char *command_path = (char *) rp + rp->path.offset;
@@ -605,32 +607,38 @@ static void change_dylib_path(Slice slice, mach_o_command *command, char *path)
     command->data = NULL;
 }
 	
-static int edit_libpath(Slice slice, mach_o_command *command, char *libpath)
+static int edit_libpath(Slice slice, mach_o_command *command, char **args)
 {
-    char *old_libpath, *old_libname;
-    char libname[strlen(basename(libpath)) + 1];
-    struct dylib_command *dc;
-
+    char *newpath = args[0], *oldpath = args[1];
+    struct dylib_command *dc = (struct dylib_command *) command->data;
+    char *current_libpath = (char *) dc + dc->dylib.name.offset;
     if (command->lc.cmd != LC_LOAD_DYLIB) {
 	if (command - slice->commands == slice->num_commands - 1) {
-	    printf("No LC_LOAD_DYLIB command matches %s.\n", basename(libpath));
+	    printf("No LC_LOAD_DYLIB command matches %s.\n",
+		   oldpath == NULL ? basename(newpath) : oldpath);
 	}
 	return 0;
     }
-    strcpy(libname, basename(libpath));
-    dc = (struct dylib_command *) command->data;
-    old_libpath = (char *) dc + dc->dylib.name.offset;
-    old_libname = basename(old_libpath);
-    if (strcmp(libname, old_libname) == 0) {
-	change_dylib_path(slice, command, libpath);
-	return 1;
+    if (oldpath == NULL) {
+	char libname[strlen(basename(newpath)) + 1];
+	char *current_libname = basename(current_libpath);
+	strcpy(libname, basename(newpath));
+	if (strcmp(libname, current_libname) == 0) {
+	    change_dylib_path(slice, command, newpath);
+	    return 1;
+	}
     } else {
-	return 0;
+	if (strcmp(oldpath, current_libpath) == 0) {
+	    change_dylib_path(slice, command, newpath);
+	    return 1;
+	}
     }
+    return 0;
 }
 
-static int set_id(Slice slice, mach_o_command *command, char *idpath)
+static int set_id(Slice slice, mach_o_command *command, char **args)
 {
+    char *idpath = args[0];
     if (command->lc.cmd != LC_ID_DYLIB) {
 	return 0;
     }
@@ -739,12 +747,13 @@ static void usage()
     printf("    mach_o [-v|--verbose] append <mach-O file> <data file> <output>\n");
     printf("    mach_o [-v|--verbose] add_rpath <library dir> <Mach-O file path>\n");
     printf("    mach_o [-v|--verbose] remove_rpath <library dir> <Mach-O file path>\n");
-    printf("    mach_o [-v|--verbose] edit_libpath <library path> <Mach-O file path>\n");
+    printf("    mach_o [-v|--verbose] edit_libpath <new path> <Mach-O file path>\n");
+    printf("    mach_o [-v|--verbose] edit_libpath <old path> <new path> <Mach-O file path>\n");
     printf("    mach_o [-v|--verbose] set_id <library path> <Mach-O file path>\n");
     exit(1);
 }
 
-typedef int (*action_op)(Slice slice, mach_o_command *command, char *arg);
+typedef int (*action_op)(Slice slice, mach_o_command *command, char **arg);
 
 typedef enum {HELP=1, VERSION, SEGMENTS, COMMANDS, APPEND, ADD_RPATH, REMOVE_RPATH,
 	      EDIT_LIBPATH, SET_ID} action_id;
@@ -775,7 +784,8 @@ int main(int argc, char **argv)
     int option_index = 0;
     char *command;
     mach_o_action action = {0};
-    char *mode, *mach_path, *data_path, *output_path, *action_arg;
+    char *mode, *mach_path, *data_path, *output_path;
+    char *action_args[2] = {NULL, NULL};
     Slice slice;
     MachO mach_o;
 
@@ -829,15 +839,25 @@ int main(int argc, char **argv)
 	output_path = argv[optind];
 	append_data(mach_path, data_path, output_path);
 	return 0;
+    case EDIT_LIBPATH:
+	if (argc < optind + 2 || argc > optind + 3) {
+	    usage();
+	}
+	if (argc == optind + 3) {
+	    action_args[1] = argv[optind++];
+	}
+	action_args[0] = argv[optind++];
+	mode = "r+";
+	mach_path = argv[optind];
+	break;
     case ADD_RPATH:
     case REMOVE_RPATH:
-    case EDIT_LIBPATH:
     case SET_ID:
 	if (argc != optind + 2) {
 	    usage();
 	}
 	mode = "r+";
-	action_arg = argv[optind++];
+	action_args[0] = argv[optind++];
 	mach_path = argv[optind];
 	break;
     default:
@@ -846,19 +866,18 @@ int main(int argc, char **argv)
 	}
 	mode = "r";
 	mach_path = argv[optind];
-	action_arg = NULL;
 	break;
     }
     mach_o = macho_init(mach_path, mode, verbose_flag);
     for (int i = 0; i < mach_o->num_archs; i++) {
 	slice = mach_o->slices[i];
 	show_slice_info(mach_o, i);
-	if ((action.id == ADD_RPATH) && find_rpath(slice, action_arg)) {
-	    printf("An RPATH load command for %s already exists.\n", action_arg);
+	if ((action.id == ADD_RPATH) && find_rpath(slice, action_args[0])) {
+	    printf("An RPATH load command for %s already exists.\n", action_args[0]);
 	    continue;
 	}
-	if ((action.id == REMOVE_RPATH) && !find_rpath(slice, action_arg)) {
-	    printf("No RPATH load command for %s exists.\n", action_arg);
+	if ((action.id == REMOVE_RPATH) && !find_rpath(slice, action_args[0])) {
+	    printf("No RPATH load command for %s exists.\n", action_args[0]);
 	    continue;
 	}
 	if ((action.id == SET_ID) && (slice->filetype != MH_DYLIB)) {
@@ -867,7 +886,7 @@ int main(int argc, char **argv)
 	}
 	if (action.op) {
 	    for (int i = 0; i < slice->num_commands; i++) {
-		if (action.op(slice, slice->commands + i, action_arg)) {
+		if (action.op(slice, slice->commands + i, action_args)) {
 		    break;
 		}
 	    }

@@ -1,5 +1,5 @@
 Macher
-=====
+======
 
 Macher is a command line tool for inspecting and modifying Mach-O binary files
 as produced by Apple's clang C compiler.
@@ -78,15 +78,18 @@ remove_rpath
     Removes all LC_RPATH load commands specifying the given search path.
 
 edit_libpath
-    $ macher [-options] edit_libpath <dylib path> <Mach-O file path>
+    $ macher [-options] edit_libpath <old path> <new path> <Mach-O file path>
+    $ macher [-options] edit_libpath <new path> <Mach-O file path>
 
-    Searches for an LC_DYLIB load command for which the library file name is the
-    same as the file name for the specified path.  If one is found, the dylib
-    path in the command is replaced by the specified path.
+    With three arguments,searches for an LC_DYLIB load command for which the
+    dylib path is the specified old path. If one is found, the dylib path in the
+    command is replaced by the new path.  This is equivalent to
+    :code:install_name_tool -change`.
 
-    This is similar to :code:`install_name_tool -change` except that it does not
-    require that you provide the existing path to be replaced.  It uses the file
-    name of the dylib to decide whether to do the replacement.
+    With two arguments this command is similar to :code:`install_name_tool
+    -change` but it does not require that you provide the exact old dylib path.
+    It uses the file name of the old path to decide whether to do the
+    replacement.
 
 set_id
     $ macher [-options] set_id <dylib id> <Mach-O file path>

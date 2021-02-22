@@ -740,16 +740,16 @@ static void macho_destroy(MachO mach_o){
 static void usage()
 {
     printf("Usage: \n");
-    printf("    mach_o [-v|--verbose] help\n");
-    printf("    mach_o [-v|--verbose] version\n");
-    printf("    mach_o [-v|--verbose] segments <mach-O file>\n");
-    printf("    mach_o [-v|--verbose] commands <mach-O file>\n");
-    printf("    mach_o [-v|--verbose] append <mach-O file> <data file> <output>\n");
-    printf("    mach_o [-v|--verbose] add_rpath <library dir> <Mach-O file path>\n");
-    printf("    mach_o [-v|--verbose] remove_rpath <library dir> <Mach-O file path>\n");
-    printf("    mach_o [-v|--verbose] edit_libpath <new path> <Mach-O file path>\n");
-    printf("    mach_o [-v|--verbose] edit_libpath <old path> <new path> <Mach-O file path>\n");
-    printf("    mach_o [-v|--verbose] set_id <library path> <Mach-O file path>\n");
+    printf("    macher [-v|--verbose] help\n");
+    printf("    macher [-v|--verbose] version\n");
+    printf("    macher [-v|--verbose] segments <mach-O file>\n");
+    printf("    macher [-v|--verbose] commands <mach-O file>\n");
+    printf("    macher [-v|--verbose] append <mach-O file> <data file> <output>\n");
+    printf("    macher [-v|--verbose] add_rpath <library dir> <Mach-O file path>\n");
+    printf("    macher [-v|--verbose] remove_rpath <library dir> <Mach-O file path>\n");
+    printf("    macher [-v|--verbose] edit_libpath <new path> <Mach-O file path>\n");
+    printf("    macher [-v|--verbose] edit_libpath <old path> <new path> <Mach-O file path>\n");
+    printf("    macher [-v|--verbose] set_id <library path> <Mach-O file path>\n");
     exit(1);
 }
 

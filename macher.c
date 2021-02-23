@@ -871,7 +871,9 @@ int main(int argc, char **argv)
     mach_o = macho_init(mach_path, mode, verbose_flag);
     for (int i = 0; i < mach_o->num_archs; i++) {
 	slice = mach_o->slices[i];
-	show_slice_info(mach_o, i);
+	if (action.id == COMMANDS || mach_o->verbose) {
+	    show_slice_info(mach_o, i);
+	}
 	if ((action.id == ADD_RPATH) && find_rpath(slice, action_args[0])) {
 	    printf("An RPATH load command for %s already exists.\n", action_args[0]);
 	    continue;

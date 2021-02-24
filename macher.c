@@ -29,6 +29,8 @@
 #define MINOR(x) ((x >> 8) & 0xff)
 #define PATCH(x) (x & 0xff)
 
+static char zero = 0;
+
 typedef struct {
     bool reversed;
     unsigned long position;
@@ -292,23 +294,25 @@ static void update_header(Slice slice)
 static void remove_command(Slice slice, int index)
 {
     mach_o_command *command = slice->commands + index;
+    mach_o_command empty = {0};
     int command_size = command->lc.cmdsize;
     int tail_size = slice->command_space - command->position - command_size;
     char *tail = malloc(tail_size);
-    char null = '\0';
+    free(command->data);
+    command->data = NULL;
     fseek(slice->mach_o_file, command->position + command_size, SEEK_SET);
     fread(tail, tail_size, 1, slice->mach_o_file);
     fseek(slice->mach_o_file, command->position, SEEK_SET);
     fwrite(tail, tail_size, 1, slice->mach_o_file);
-    fwrite(&null, 1, command_size, slice->mach_o_file);
+    fwrite(&zero, 1, command_size, slice->mach_o_file);
     free(tail);
     for (int i = index; i < slice->num_commands - 1; i++) {
 	slice->commands[i] = slice->commands[i + 1];
+	slice->commands[i].position -= command_size;
     }
     slice->num_commands -= 1;
+    slice->commands[slice->num_commands] = empty;
     slice->command_block_size -= command_size;
-    slice->command_space += command_size;
-    free(command->data);
     update_header(slice);
 }
 
@@ -361,7 +365,7 @@ static bool find_rpath(Slice slice, char *rpath)
 {
     for (int i = 0; i < slice->num_commands; i++) {
 	mach_o_command *command = slice->commands + i;
-	if (command->lc.cmd == LC_RPATH) {
+	if (command->lc.cmd == LC_RPATH && command->data) {
 	    struct rpath_command *rp = (struct rpath_command *) command->data;
 	    char *command_rpath = (char *) rp + rp->path.offset;
 	    if (!strcmp(rpath, command_rpath)) {
@@ -823,6 +827,9 @@ int main(int argc, char **argv)
 	    break;
 	}
     }
+    if (action.id == 0) {
+	usage();
+    }
     switch(action.id) {
     case HELP:
 	usage();
@@ -888,8 +895,13 @@ int main(int argc, char **argv)
 	}
 	if (action.op) {
 	    for (int i = 0; i < slice->num_commands; i++) {
+		int count = slice->num_commands;
 		if (action.op(slice, slice->commands + i, action_args)) {
 		    break;
+		}
+		if (action.id == REMOVE_RPATH &&
+		    count > slice->num_commands) {
+		    i--;
 		}
 	    }
 	}

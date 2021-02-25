@@ -717,7 +717,11 @@ static void show_slice_info(MachO mach_o, int index) {
 	exit(1);
     }
     Slice slice = mach_o->slices[index];
-    printf("\nSlice %d (for architecture %s):\n", index, slice->info->name);
+    struct mach_header *header = (struct mach_header *) slice->header_data;
+    printf("\nSlice: %d\n", index);
+    printf("Filetype: %s\n", filetype_names[header->filetype]);
+    printf("Architecture: %s\n", slice->info->name);
+    printf("Load Commands:\n");
     if (slice->verbose) {
 	printf("Offset: %d\n", slice->offset);
 	printf("Space used for load commands: %d bytes (%u load commands)\n",

@@ -4,7 +4,7 @@ macher: append_data.o macher.h macher.c
 	gcc ${CFLAGS} -o macher append_data.o macher.c
 
 macher.h:
-	/usr/bin/env python3 make_header.py
+	/usr/bin/env python3 make_header.py > macher.h
 
 append_data.o: append_data.c
 	gcc ${CFLAGS} -c append_data.c

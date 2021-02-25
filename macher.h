@@ -55,3 +55,18 @@ char* load_command_names[] = {
 /*0x35*/  "LC_FILESET_ENTRY",
 };
 int num_load_commands = 0x36;
+char* filetype_names[] = {
+/*0x0*/  "Unknown",
+/*0x1*/  "MH_OBJECT",
+/*0x2*/  "MH_EXECUTE",
+/*0x3*/  "MH_FVMLIB",
+/*0x4*/  "MH_CORE",
+/*0x5*/  "MH_PRELOAD",
+/*0x6*/  "MH_DYLIB",
+/*0x7*/  "MH_DYLINKER",
+/*0x8*/  "MH_BUNDLE",
+/*0x9*/  "MH_DYLIB_STUB",
+/*0xa*/  "MH_DSYM",
+/*0xb*/  "MH_KEXT_BUNDLE",
+/*0xc*/  "MH_FILESET",
+};

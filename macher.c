@@ -719,9 +719,6 @@ static void show_slice_info(MachO mach_o, int index) {
     Slice slice = mach_o->slices[index];
     struct mach_header *header = (struct mach_header *) slice->header_data;
     printf("\nSlice: %d\n", index);
-    printf("Filetype: %s\n", filetype_names[header->filetype]);
-    printf("Architecture: %s\n", slice->info->name);
-    printf("Load Commands:\n");
     if (slice->verbose) {
 	printf("Offset: %d\n", slice->offset);
 	printf("Space used for load commands: %d bytes (%u load commands)\n",
@@ -729,6 +726,9 @@ static void show_slice_info(MachO mach_o, int index) {
 	printf("Space available for load commands: %lu bytes\n\n",
 	       slice->command_space);
     }
+    printf("Filetype: %s\n", filetype_names[header->filetype]);
+    printf("Architecture: %s\n", slice->info->name);
+    printf("Load Commands:\n");
 }
 
 static void macho_destroy(MachO mach_o){
@@ -751,7 +751,7 @@ static void usage()
     printf("    macher [-v|--verbose] help\n");
     printf("    macher [-v|--verbose] version\n");
     printf("    macher [-v|--verbose] segments <mach-O file>\n");
-    printf("    macher [-v|--verbose] commands <mach-O file>\n");
+    printf("    macher [-v|--verbose] info <mach-O file>\n");
     printf("    macher [-v|--verbose] append <mach-O file> <data file> <output>\n");
     printf("    macher [-v|--verbose] add_rpath <library dir> <Mach-O file path>\n");
     printf("    macher [-v|--verbose] remove_rpath <library dir> <Mach-O file path>\n");
@@ -763,7 +763,7 @@ static void usage()
 
 typedef int (*action_op)(Slice slice, mach_o_command *command, char **arg);
 
-typedef enum {HELP=1, VERSION, SEGMENTS, COMMANDS, APPEND, ADD_RPATH, REMOVE_RPATH,
+typedef enum {HELP=1, VERSION, SEGMENTS, INFO, APPEND, ADD_RPATH, REMOVE_RPATH,
 	      EDIT_LIBPATH, SET_ID} action_id;
 
 typedef struct {
@@ -775,7 +775,7 @@ typedef struct {
 static mach_o_action actions[] = {
     {.id = HELP, .name = "help", .op = NULL},
     {.id = VERSION, .name = "version", .op = NULL},
-    {.id = COMMANDS, .name = "commands", .op = print_command},
+    {.id = INFO, .name = "info", .op = print_command},
     {.id = SEGMENTS, .name = "segments", .op = print_segment},
     {.id = APPEND, .name = "append", .op = NULL},
     {.id = ADD_RPATH, .name = "add_rpath", .op = add_rpath},
@@ -882,7 +882,7 @@ int main(int argc, char **argv)
     mach_o = macho_init(mach_path, mode, verbose_flag);
     for (int i = 0; i < mach_o->num_archs; i++) {
 	slice = mach_o->slices[i];
-	if (action.id == COMMANDS || mach_o->verbose) {
+	if (action.id == INFO || mach_o->verbose) {
 	    show_slice_info(mach_o, i);
 	}
 	if ((action.id == ADD_RPATH) && find_rpath(slice, action_args[0])) {

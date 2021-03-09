@@ -571,6 +571,19 @@ static int remove_rpath(Slice slice, mach_o_command *command, char **args)
     return 0;
 }
 
+static int clear_rpaths(Slice slice, mach_o_command *command, char **args)
+{
+    if (command->lc.cmd == LC_RPATH) {
+	if (slice->verbose) {
+	    struct rpath_command *rp = (struct rpath_command *) command->data;
+	    char *command_path = (char *) rp + rp->path.offset;
+	    printf("Removed RPATH load command for %s\n", command_path);
+	}
+	remove_command(slice, command - slice->commands);
+    }
+    return 0;
+}
+
 static void change_dylib_path(Slice slice, mach_o_command *command, char *path)
 {
     int index = command - slice->commands;
@@ -755,6 +768,7 @@ static void usage()
     printf("    macher [-v|--verbose] append <mach-O file> <data file> <output>\n");
     printf("    macher [-v|--verbose] add_rpath <library dir> <Mach-O file path>\n");
     printf("    macher [-v|--verbose] remove_rpath <library dir> <Mach-O file path>\n");
+    printf("    macher [-v|--verbose] clear_rpaths <Mach-O file path>\n");
     printf("    macher [-v|--verbose] edit_libpath <new path> <Mach-O file path>\n");
     printf("    macher [-v|--verbose] edit_libpath <old path> <new path> <Mach-O file path>\n");
     printf("    macher [-v|--verbose] set_id <library path> <Mach-O file path>\n");
@@ -764,7 +778,7 @@ static void usage()
 typedef int (*action_op)(Slice slice, mach_o_command *command, char **arg);
 
 typedef enum {HELP=1, VERSION, SEGMENTS, INFO, APPEND, ADD_RPATH, REMOVE_RPATH,
-	      EDIT_LIBPATH, SET_ID} action_id;
+	      CLEAR_RPATHS, EDIT_LIBPATH, SET_ID} action_id;
 
 typedef struct {
     action_id id;
@@ -780,6 +794,7 @@ static mach_o_action actions[] = {
     {.id = APPEND, .name = "append", .op = NULL},
     {.id = ADD_RPATH, .name = "add_rpath", .op = add_rpath},
     {.id = REMOVE_RPATH, .name = "remove_rpath", .op = remove_rpath},
+    {.id = CLEAR_RPATHS, .name = "clear_rpaths", .op = clear_rpaths},
     {.id = EDIT_LIBPATH, .name = "edit_libpath", .op = edit_libpath},
     {.id = SET_ID, .name = "set_id", .op = set_id},
     {0}
@@ -861,6 +876,13 @@ int main(int argc, char **argv)
 	mode = "r+";
 	mach_path = argv[optind];
 	break;
+    case CLEAR_RPATHS:
+	if (argc != optind + 1) {
+	    usage();
+	}
+	mode = "r+";
+	mach_path = argv[optind];
+	break;
     case ADD_RPATH:
     case REMOVE_RPATH:
     case SET_ID:
@@ -903,8 +925,7 @@ int main(int argc, char **argv)
 		if (action.op(slice, slice->commands + i, action_args)) {
 		    break;
 		}
-		if (action.id == REMOVE_RPATH &&
-		    count > slice->num_commands) {
+		while (count-- > slice->num_commands) {
 		    i--;
 		}
 	    }

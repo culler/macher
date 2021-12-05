@@ -2,7 +2,7 @@ import os
 import re
 get_command = re.compile('#define\s(LC_[A-Z_]*).*(0x[0-9a-fA-F]*)')
 get_filetype = re.compile('#define\s(MH_[A-Z_]*).*(0x[0-9a-fA-F]*)')
-sdk = '/Library/Developer/CommandLineTools/SDKs/MacOSX11.1.sdk'
+sdk = '/Library/Developer/CommandLineTools/SDKs/MacOSX12.0.sdk'
 print('char* load_command_names[] = {')
 count = 0
 with open(os.path.join(sdk, 'usr', 'include', 'mach-o', 'loader.h')) as input_file:

@@ -1,4 +1,4 @@
-#CFLAGS=-arch x86_64 -arch arm64
+CFLAGS=-arch x86_64 -arch arm64
 
 macher: append_data.o macher.h macher.c
 	gcc ${CFLAGS} -o macher append_data.o macher.c

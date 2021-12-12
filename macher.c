@@ -549,7 +549,7 @@ static int add_rpath(Slice slice, mach_o_command *command, char **args)
     slice->num_commands += 1;
     slice->command_block_size += command_size;
     slice->command_space -= command_size;
-    fseek(slice->mach_o_file, mc->position, SEEK_SET);
+    fseek(slice->mach_o_file, slice->offset + mc->position, SEEK_SET);
     int count = fwrite((char *) mc->data, 1, command_size, slice->mach_o_file);
     update_header(slice);
     return 1;

@@ -1,0 +1,5 @@
+*.o
+macher
+*.pkg
+package/bin
+package/IDs.sh

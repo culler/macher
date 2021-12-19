@@ -1,4 +1,4 @@
-CFLAGS=-arch x86_64 -arch arm64
+CFLAGS=-arch x86_64 -arch arm64 -mmacosx-version-min=10.6
 
 macher: append_data.o macher.h macher.c
 	gcc ${CFLAGS} -o macher append_data.o macher.c
@@ -8,6 +8,9 @@ macher.h:
 
 append_data.o: append_data.c
 	gcc ${CFLAGS} -c append_data.c
+
+package: macher
+	cd package; bash build_package.sh
 
 example/hello.zip: example/main.tcl
 	cd example; zip hello.zip main.tcl
@@ -22,4 +25,4 @@ example: example/hello example/hello.zip example/main.tcl example/tclsh8.7
 	example/hello
 
 clean:
-	rm -f *.o macher example/hello*
+	rm -f *.o macher example/hello* package/*.pkg

@@ -436,6 +436,13 @@ static int print_command(Slice slice, mach_o_command *command, char **args)
 		   (char *) command->data + dl->dylib.name.offset);
 	}
 	break;
+    case LC_REEXPORT_DYLIB & ~LC_REQ_DYLD:
+	{
+	    struct dylib_command *dl = (struct dylib_command *)command->data;
+	    printf("    LC_REEXPORT_DYLIB: %s\n",
+		   (char *) command->data + dl->dylib.name.offset);
+	}
+	break;
     case LC_UUID:
 	{
 	    struct uuid_command *uu = (struct uuid_command *)command->data;
@@ -629,9 +636,9 @@ static int edit_libpath(Slice slice, mach_o_command *command, char **args)
     char *newpath = args[0], *oldpath = args[1];
     struct dylib_command *dc = (struct dylib_command *) command->data;
     char *current_libpath = (char *) dc + dc->dylib.name.offset;
-    if (command->lc.cmd != LC_LOAD_DYLIB) {
+    if (command->lc.cmd != LC_LOAD_DYLIB && command->lc.cmd != LC_REEXPORT_DYLIB) {
 	if (command - slice->commands == slice->num_commands - 1) {
-	    printf("No LC_LOAD_DYLIB command matches %s.\n",
+	    printf("No LC_LOAD_DYLIB or LC_REEXPORT_DYLIB command matches %s.\n",
 		   oldpath == NULL ? basename(newpath) : oldpath);
 	}
 	return 0;

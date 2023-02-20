@@ -72,11 +72,13 @@ add_rpath
     loader will search for the library in all paths obtained by replacing
     @rpath by one of the paths given in LC_RPATH load commands.
 
-remove_rpath $ macher [-options] remove_rpath <library search path> <Mach-O file path>
+remove_rpath
+    $ macher [-options] remove_rpath <library search path> <Mach-O file path>
 
     Removes all LC_RPATH load commands specifying the given search path.
 
-clear_rpaths $ macher [-options] clear_rpaths <library search path> <Mach-O file path>
+clear_rpaths
+    $ macher [-options] clear_rpaths <library search path> <Mach-O file path>
 
     Removes all LC_RPATH load commands.
 

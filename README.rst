@@ -89,7 +89,7 @@ edit_libpath
     With three arguments,searches for an LC_DYLIB load command for which the
     dylib path is the specified old path. If one is found, the dylib path in the
     command is replaced by the new path.  This is equivalent to
-    :code:install_name_tool -change`.
+    :code:`install_name_tool -change`.
 
     With two arguments this command is similar to :code:`install_name_tool
     -change` but it does not require that you provide the exact old dylib path.

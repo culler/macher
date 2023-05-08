@@ -78,9 +78,14 @@ remove_rpath
     Removes all LC_RPATH load commands specifying the given search path.
 
 clear_rpaths
-    $ macher [-options] clear_rpaths <library search path> <Mach-O file path>
+    $ macher [-options] clear_rpaths <Mach-O file path>
 
     Removes all LC_RPATH load commands.
+
+remove_signature
+    $ macher [-options] remove_signature <Mach-O file path>
+
+    Removes all LC_CODE_SIGNATURE load commands.
 
 edit_libpath
     $ macher [-options] edit_libpath <old path> <new path> <Mach-O file path>

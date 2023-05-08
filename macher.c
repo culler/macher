@@ -8,7 +8,7 @@
  * See the file License.txt included with the source code distribution.
  *
  */
-#define MACHER_VERSION "1.3"
+#define MACHER_VERSION "1.4"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -82,6 +82,7 @@ static int print_segment(Slice slice, mach_o_command *command, char **args);
 static int add_rpath(Slice slice, mach_o_command *command, char **args);
 static int remove_rpath(Slice slice, mach_o_command *command, char **args);
 static int edit_libpath(Slice slice, mach_o_command *command, char **args);
+static int remove_signature(Slice slice, mach_o_command *command, char **args);
 
 static void  usage();
 extern void  append_data(char *mach_path, char *data_path, char *output_path);
@@ -591,6 +592,19 @@ static int clear_rpaths(Slice slice, mach_o_command *command, char **args)
     return 0;
 }
 
+
+static int remove_signature(Slice slice, mach_o_command *command, char **args)
+{
+    if (command->lc.cmd == LC_CODE_SIGNATURE) {
+	struct lc_command *cmd = (struct lc_command *) command->data;	
+	remove_command(slice, command - slice->commands);
+	if (slice->verbose) {
+	    printf("Removed code signature.\n");
+	}
+    }
+    return 0;
+}
+
 static void change_dylib_path(Slice slice, mach_o_command *command, char *path)
 {
     int index = command - slice->commands;
@@ -636,7 +650,8 @@ static int edit_libpath(Slice slice, mach_o_command *command, char **args)
     char *newpath = args[0], *oldpath = args[1];
     struct dylib_command *dc = (struct dylib_command *) command->data;
     char *current_libpath = (char *) dc + dc->dylib.name.offset;
-    if (command->lc.cmd != LC_LOAD_DYLIB && command->lc.cmd != LC_REEXPORT_DYLIB) {
+    if (command->lc.cmd != LC_LOAD_DYLIB &&
+	command->lc.cmd != LC_REEXPORT_DYLIB) {
 	if (command - slice->commands == slice->num_commands - 1) {
 	    printf("No LC_LOAD_DYLIB or LC_REEXPORT_DYLIB command matches %s.\n",
 		   oldpath == NULL ? basename(newpath) : oldpath);
@@ -776,6 +791,7 @@ static void usage()
     printf("    macher [-v|--verbose] add_rpath <library dir> <Mach-O file path>\n");
     printf("    macher [-v|--verbose] remove_rpath <library dir> <Mach-O file path>\n");
     printf("    macher [-v|--verbose] clear_rpaths <Mach-O file path>\n");
+    printf("    macher [-v|--verbose] remove_signature <Mach-O file path>\n");
     printf("    macher [-v|--verbose] edit_libpath <new path> <Mach-O file path>\n");
     printf("    macher [-v|--verbose] edit_libpath <old path> <new path> <Mach-O file path>\n");
     printf("    macher [-v|--verbose] set_id <library path> <Mach-O file path>\n");
@@ -785,7 +801,7 @@ static void usage()
 typedef int (*action_op)(Slice slice, mach_o_command *command, char **arg);
 
 typedef enum {HELP=1, VERSION, SEGMENTS, INFO, APPEND, ADD_RPATH, REMOVE_RPATH,
-	      CLEAR_RPATHS, EDIT_LIBPATH, SET_ID} action_id;
+	      CLEAR_RPATHS, EDIT_LIBPATH, SET_ID, UNSIGN} action_id;
 
 typedef struct {
     action_id id;
@@ -804,7 +820,7 @@ static mach_o_action actions[] = {
     {.id = CLEAR_RPATHS, .name = "clear_rpaths", .op = clear_rpaths},
     {.id = EDIT_LIBPATH, .name = "edit_libpath", .op = edit_libpath},
     {.id = SET_ID, .name = "set_id", .op = set_id},
-    {0}
+    {.id = UNSIGN, .name = "remove_signature", .op = remove_signature},
 };
 
 int main(int argc, char **argv)
@@ -884,6 +900,7 @@ int main(int argc, char **argv)
 	mach_path = argv[optind];
 	break;
     case CLEAR_RPATHS:
+    case UNSIGN:
 	if (argc != optind + 1) {
 	    usage();
 	}

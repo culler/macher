@@ -1,6 +1,6 @@
 /*
- * Macher is a command line tool for inspecting and modifying Mach-O binary files
- * as produced by Apple's clang C compiler.
+ * Macher is a command line tool for inspecting and modifying Mach-O binary
+ * files as produced by Apple's clang C compiler.
  *
  * Copyright © 2021 Marc Culler
  *
@@ -8,7 +8,7 @@
  * See the file License.txt included with the source code distribution.
  *
  */
-#define MACHER_VERSION "1.4"
+#define MACHER_VERSION "1.5"
 
 #include <stdio.h>
 #include <stdlib.h>

@@ -8,7 +8,7 @@
  * See the file License.txt included with the source code distribution.
  *
  */
-#define MACHER_VERSION "1.5"
+#define MACHER_VERSION "1.6"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -76,16 +76,56 @@ static MachO macho_init(char *mach_o_path, char *mode, bool verbose);
 static void macho_destroy(MachO mach_o);
 static void show_slice_info(MachO mach_o, int index);
 
-/* actions */
-static int print_command(Slice slice, mach_o_command *command, char **args);
-static int print_segment(Slice slice, mach_o_command *command, char **args);
-static int add_rpath(Slice slice, mach_o_command *command, char **args);
-static int remove_rpath(Slice slice, mach_o_command *command, char **args);
-static int edit_libpath(Slice slice, mach_o_command *command, char **args);
-static int remove_signature(Slice slice, mach_o_command *command, char **args);
+/* Actions: */
+/*
+ * If an action has a non-null action_op field then the action_op
+ * will be called in a loop for each load command.  If the unsign
+ * flag is set then the (now invalid) LC_CODE_SIGNATURE load command
+ * will be removed after the loop terminates.  If an action_op
+ * returns OP_BREAK then the loop is terminated when the action_op
+ * returns. 
+ */
 
-static void  usage();
-extern void  append_data(char *mach_path, char *data_path, char *output_path);
+typedef enum {OP_CONTINUE=0, OP_BREAK} op_result;
+typedef op_result (*action_op)(Slice slice, mach_o_command *command, char **arg);
+typedef enum {HELP=1, VERSION, SEGMENTS, INFO, APPEND, ADD_RPATH, REMOVE_RPATH,
+	      CLEAR_RPATHS, EDIT_LIBPATH, SET_ID, UNSIGN} action_id;
+
+typedef struct {
+    action_id id;
+    char *name;
+    action_op op;
+    bool unsign;
+} mach_o_action;
+
+
+static op_result print_command(Slice slice, mach_o_command *command, char **args);
+static op_result print_segment(Slice slice, mach_o_command *command, char **args);
+static op_result set_id(Slice slice, mach_o_command *command, char **args);
+static op_result add_rpath(Slice slice, mach_o_command *command, char **args);
+static op_result remove_rpath(Slice slice, mach_o_command *command, char **args);
+static op_result clear_rpaths(Slice slice, mach_o_command *command, char **args);
+static op_result edit_libpath(Slice slice, mach_o_command *command, char **args);
+static op_result remove_signature(Slice slice, mach_o_command *command, char **args);
+
+static mach_o_action actions[] = {
+    {.id = HELP, .name = "help", .op = NULL, .unsign=false},
+    {.id = VERSION, .name = "version", .op = NULL, .unsign=false},
+    {.id = INFO, .name = "info", .op = print_command, .unsign=false},
+    {.id = SEGMENTS, .name = "segments", .op = print_segment, .unsign=false},
+    {.id = APPEND, .name = "append", .op = NULL, .unsign=false},
+    {.id = UNSIGN, .name = "remove_signature", .op = remove_signature, .unsign=false},
+    {.id = ADD_RPATH, .name = "add_rpath", .op = add_rpath, .unsign=true},
+    {.id = REMOVE_RPATH, .name = "remove_rpath", .op = remove_rpath, .unsign=true},
+    {.id = CLEAR_RPATHS, .name = "clear_rpaths", .op = clear_rpaths, .unsign=true},
+    {.id = EDIT_LIBPATH, .name = "edit_libpath", .op = edit_libpath, .unsign=true},
+    {.id = SET_ID, .name = "set_id", .op = set_id, .unsign=true},
+    {0}
+};
+
+extern void append_data(char *mach_path, char *data_path, char *output_path);
+static void unsign(Slice slice);
+static void usage();
 
 static Slice slice_init(FILE *mach_o_file, int offset, bool verbose)
 {
@@ -296,8 +336,8 @@ static void remove_command(Slice slice, int index)
 {
     mach_o_command *command = slice->commands + index;
     mach_o_command empty = {0};
-    int command_size = command->lc.cmdsize;
-    int tail_size = slice->command_space - command->position - command_size;
+    unsigned long command_size = command->lc.cmdsize;
+    int tail_size = slice->offset + slice->command_space - command->position - command_size;
     char *tail = malloc(tail_size);
     free(command->data);
     command->data = NULL;
@@ -325,16 +365,10 @@ static void compute_command_space(Slice slice)
 	if (command->lc.cmd == LC_SEGMENT_64) {
 	    struct segment_command_64 *seg = (struct segment_command_64 *)
 		command->data;
-	    if (!strcmp(seg->segname, "__TEXT")) {
+	    if (strcmp(seg->segname, "__TEXT") == 0) {
 		struct section_64 *section = (struct section_64 *)
 		    (command->data + sizeof(struct segment_command_64));
 		command_space = section->offset;
-		for (int i = 1; i < seg->nsects; i++){
-		    if (section->offset < command_space) {
-			command_space = section->offset;
-		    }
-		    section++;
-		}
 		break;
 	    }
 	} else if (command->lc.cmd == LC_SEGMENT) {
@@ -344,12 +378,6 @@ static void compute_command_space(Slice slice)
 		struct section *section = (struct section *)
 		    ((char *)seg + sizeof(struct segment_command));
 		command_space = section->offset;
-		for (int i = 1; i < seg->nsects; i++){
-		    if (section->offset < command_space) {
-			command_space = section->offset;
-		    }
-		    section++;
-		}
 		break;
 	    }
 	}
@@ -377,9 +405,13 @@ static bool find_rpath(Slice slice, char *rpath)
     return false;
 }
 
-static int print_command(Slice slice, mach_o_command *command, char **args)
+static op_result print_command(Slice slice, mach_o_command *command, char **args)
 {
     int command_id = command->lc.cmd & ~LC_REQ_DYLD;
+    if (slice->verbose) {
+        printf("<%lu-%lu> ", command->position,
+                   command->position + command->lc.cmdsize);
+    }
     switch (command_id) {
     case LC_SEGMENT:
 	{
@@ -519,18 +551,18 @@ static int print_command(Slice slice, mach_o_command *command, char **args)
 	}
 	break;
     }
-    return 0;
+    return OP_CONTINUE;
 }
 
-static int print_segment(Slice slice, mach_o_command *command, char **args)
+static op_result print_segment(Slice slice, mach_o_command *command, char **args)
 {
     if (command->lc.cmd == LC_SEGMENT || command->lc.cmd == LC_SEGMENT_64) {
 	print_command(slice, command, args);
     }
-    return 0;
+    return OP_CONTINUE;
 }
 
-static int add_rpath(Slice slice, mach_o_command *command, char **args)
+static op_result add_rpath(Slice slice, mach_o_command *command, char **args)
 {
     char *rpath = args[0];
     mach_o_command *mc = slice->commands + slice->num_commands;
@@ -560,26 +592,28 @@ static int add_rpath(Slice slice, mach_o_command *command, char **args)
     fseek(slice->mach_o_file, slice->offset + mc->position, SEEK_SET);
     int count = fwrite((char *) mc->data, 1, command_size, slice->mach_o_file);
     update_header(slice);
-    return 1;
+    return OP_BREAK;
 }
 
-static int remove_rpath(Slice slice, mach_o_command *command, char **args)
+static op_result remove_rpath(Slice slice, mach_o_command *command, char **args)
 {
     char *rpath = args[0];
-    if (command->lc.cmd == LC_RPATH) {
-	struct rpath_command *rp = (struct rpath_command *) command->data;
-	char *command_path = (char *) rp + rp->path.offset;
-	if (!strcmp(rpath, command_path)) {
-	    if (slice->verbose) {
-		printf("Removed RPATH load command for %s\n", rpath);
-	    }
-	    remove_command(slice, command - slice->commands);
-	}
+    if (command->lc.cmd != LC_RPATH) {
+        return OP_CONTINUE;
     }
-    return 0;
+    struct rpath_command *rp = (struct rpath_command *) command->data;
+    char *command_path = (char *) rp + rp->path.offset;
+    if (strcmp(rpath, command_path)) {
+	return OP_CONTINUE;
+    }
+    remove_command(slice, command - slice->commands);
+    if (slice->verbose) {
+	printf("Removed RPATH load command for %s\n", rpath);
+    }
+    return OP_BREAK;
 }
 
-static int clear_rpaths(Slice slice, mach_o_command *command, char **args)
+static op_result clear_rpaths(Slice slice, mach_o_command *command, char **args)
 {
     if (command->lc.cmd == LC_RPATH) {
 	if (slice->verbose) {
@@ -589,20 +623,28 @@ static int clear_rpaths(Slice slice, mach_o_command *command, char **args)
 	}
 	remove_command(slice, command - slice->commands);
     }
-    return 0;
+    return OP_CONTINUE;
 }
 
-
-static int remove_signature(Slice slice, mach_o_command *command, char **args)
-{
-    if (command->lc.cmd == LC_CODE_SIGNATURE) {
-	struct lc_command *cmd = (struct lc_command *) command->data;	
-	remove_command(slice, command - slice->commands);
-	if (slice->verbose) {
-	    printf("Removed code signature.\n");
+static void unsign(Slice slice) {
+    for (int i = 1; i < slice->num_commands; i++) {
+	if (slice->commands[i].lc.cmd == LC_CODE_SIGNATURE) {
+	    remove_signature(slice, slice->commands + i, NULL);
 	}
     }
-    return 0;
+}
+
+	static op_result remove_signature(Slice slice, mach_o_command *command, char **args)
+{
+    if (command->lc.cmd != LC_CODE_SIGNATURE) {
+	return OP_CONTINUE;
+    }
+    struct lc_command *cmd = (struct lc_command *) command->data;
+    remove_command(slice, command - slice->commands);
+    if (slice->verbose) {
+	printf("Removed code signature.\n");
+    }
+    return OP_BREAK;
 }
 
 static void change_dylib_path(Slice slice, mach_o_command *command, char *path)
@@ -645,7 +687,7 @@ static void change_dylib_path(Slice slice, mach_o_command *command, char *path)
     command->data = NULL;
 }
 	
-static int edit_libpath(Slice slice, mach_o_command *command, char **args)
+static op_result edit_libpath(Slice slice, mach_o_command *command, char **args)
 {
     char *newpath = args[0], *oldpath = args[1];
     struct dylib_command *dc = (struct dylib_command *) command->data;
@@ -656,7 +698,7 @@ static int edit_libpath(Slice slice, mach_o_command *command, char **args)
 	    printf("No LC_LOAD_DYLIB or LC_REEXPORT_DYLIB command matches %s.\n",
 		   oldpath == NULL ? basename(newpath) : oldpath);
 	}
-	return 0;
+	return OP_CONTINUE;
     }
     if (oldpath == NULL) {
 	char libname[strlen(basename(newpath)) + 1];
@@ -664,25 +706,25 @@ static int edit_libpath(Slice slice, mach_o_command *command, char **args)
 	strcpy(libname, basename(newpath));
 	if (strcmp(libname, current_libname) == 0) {
 	    change_dylib_path(slice, command, newpath);
-	    return 1;
+	    return OP_BREAK;
 	}
     } else {
 	if (strcmp(oldpath, current_libpath) == 0) {
 	    change_dylib_path(slice, command, newpath);
-	    return 1;
+	    return OP_BREAK;
 	}
     }
-    return 0;
+    return OP_CONTINUE;
 }
 
-static int set_id(Slice slice, mach_o_command *command, char **args)
+static op_result set_id(Slice slice, mach_o_command *command, char **args)
 {
     char *idpath = args[0];
     if (command->lc.cmd != LC_ID_DYLIB) {
-	return 0;
+	return OP_CONTINUE;
     }
     change_dylib_path(slice, command, idpath);
-    return 1;
+    return OP_BREAK;
 }
 
 static MachO macho_init(char *mach_o_path, char *mode, bool verbose){
@@ -795,33 +837,9 @@ static void usage()
     printf("    macher [-v|--verbose] edit_libpath <new path> <Mach-O file path>\n");
     printf("    macher [-v|--verbose] edit_libpath <old path> <new path> <Mach-O file path>\n");
     printf("    macher [-v|--verbose] set_id <library path> <Mach-O file path>\n");
+    printf("    macher [-v|--verbose] remove_signature <Mach-O file path>\n");
     exit(1);
 }
-
-typedef int (*action_op)(Slice slice, mach_o_command *command, char **arg);
-
-typedef enum {HELP=1, VERSION, SEGMENTS, INFO, APPEND, ADD_RPATH, REMOVE_RPATH,
-	      CLEAR_RPATHS, EDIT_LIBPATH, SET_ID, UNSIGN} action_id;
-
-typedef struct {
-    action_id id;
-    char *name;
-    action_op op;
-} mach_o_action;
-
-static mach_o_action actions[] = {
-    {.id = HELP, .name = "help", .op = NULL},
-    {.id = VERSION, .name = "version", .op = NULL},
-    {.id = INFO, .name = "info", .op = print_command},
-    {.id = SEGMENTS, .name = "segments", .op = print_segment},
-    {.id = APPEND, .name = "append", .op = NULL},
-    {.id = ADD_RPATH, .name = "add_rpath", .op = add_rpath},
-    {.id = REMOVE_RPATH, .name = "remove_rpath", .op = remove_rpath},
-    {.id = CLEAR_RPATHS, .name = "clear_rpaths", .op = clear_rpaths},
-    {.id = EDIT_LIBPATH, .name = "edit_libpath", .op = edit_libpath},
-    {.id = SET_ID, .name = "set_id", .op = set_id},
-    {.id = UNSIGN, .name = "remove_signature", .op = remove_signature},
-};
 
 int main(int argc, char **argv)
 {
@@ -946,13 +964,17 @@ int main(int argc, char **argv)
 	if (action.op) {
 	    for (int i = 0; i < slice->num_commands; i++) {
 		int count = slice->num_commands;
-		if (action.op(slice, slice->commands + i, action_args)) {
+		if (action.op(slice, slice->commands + i, action_args) == OP_BREAK) {
 		    break;
 		}
+		/* If commands were removed, back up. */
 		while (count-- > slice->num_commands) {
 		    i--;
 		}
 	    }
+	}
+	if (action.unsign) {
+	    unsign(slice);
 	}
     }
     macho_destroy(mach_o);

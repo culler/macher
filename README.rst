@@ -68,6 +68,8 @@ add_rpath
     add the load command if there already exists an LC_RPATH load command with
     the same path.
 
+    This action also removes all LC_CODE_SIGNATURE load commands.
+
     If there is a LC_DYLIB command containing the substring @rpath then the
     loader will search for the library in all paths obtained by replacing
     @rpath by one of the paths given in LC_RPATH load commands.
@@ -77,10 +79,14 @@ remove_rpath
 
     Removes all LC_RPATH load commands specifying the given search path.
 
+    This action also removes all LC_CODE_SIGNATURE load commands.
+
 clear_rpaths
     $ macher [-options] clear_rpaths <Mach-O file path>
 
     Removes all LC_RPATH load commands.
+
+    This action also removes all LC_CODE_SIGNATURE load commands.
 
 remove_signature
     $ macher [-options] remove_signature <Mach-O file path>
@@ -101,6 +107,8 @@ edit_libpath
     It uses the file name of the old path to decide whether to do the
     replacement.
 
+    This action also removes all LC_CODE_SIGNATURE load commands.
+
 set_id
     $ macher [-options] set_id <dylib id> <Mach-O file path>
 
@@ -108,3 +116,6 @@ set_id
     LC_ID_DYLIB load command exists only for dylib files.  When another
     executable is linked with the dylib, the linker copies the id into an
     LC_DYLIB command for the executable.
+
+    This action also removes all LC_CODE_SIGNATURE load commands.
+

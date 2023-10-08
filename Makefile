@@ -26,3 +26,7 @@ example: example/hello example/hello.zip example/main.tcl example/tclsh8.7
 
 clean:
 	rm -f *.o macher example/hello* package/*.pkg
+
+install:
+	sudo cp macher /usr/local/bin
+

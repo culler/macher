@@ -27,6 +27,11 @@
  * so the OS will not attempt to run the zip archive as an executable.  Also, after
  * appending the Zip archive, the command zip -A should be used to adjust the file
  * offsets within the archive to account for the prepended binary. 
+ *
+ * We have to deal with two cases, depending on whether the Mach-O binary is thin.
+ * Care must be taken to ensure that each slice has a page-aligned offset.  While
+ * the page-alignment requirement seems to be satisfied with offsets that are
+ * multiples of 4K, Apple seems to use multiples of 16K.  So we also use 16K. 
  */
 
 static char zero = 0;
@@ -43,7 +48,7 @@ void append_data(
     struct stat st;
     char buffer[512];
     FILE *data, *mach, *output;
-    int fathead_size, fathead_padding, mach_size, data_size;
+    int fathead_size, fathead_padding, mach_size, data_size, data_offset;
     uint32_t magic, cputype, cpusubtype;
     bool isfat = false;
 
@@ -98,14 +103,19 @@ void append_data(
      * appears to do.
      */
     if (!isfat) {
+        /* Our mach-O file is thin, so it contains just one mach header followed by
+         * data.  We need to add a fat header followed by an array of two fat_arch
+         * structs and then pad with zeros to a size which is a multiple of 16K.
+         * We may then add the existing mach header and its data. That must also
+         * be padded so that the data slice added at the end has an offset which
+         * is a multiple of 16K.
+         */
 	fathead.magic = FAT_MAGIC;
 	fathead.nfat_arch = 2;
 	archs = (struct fat_arch *) calloc(fathead.nfat_arch, sizeof(struct fat_arch));
 	fathead_size = sizeof(fathead) + fathead.nfat_arch * sizeof(struct fat_arch);
 	fathead_padding = ((fathead_size + 0x3fff) & ~0x3fff) - fathead_size;
-	if (fathead_padding < 0) {
-	    fathead_padding += 0x4000;
-	}
+	data_offset = ((fathead_size + fathead_padding + mach_size + 0x3fff) & ~0x3fff);
 	struct fat_arch arch = {
 	    .cputype = cputype,
 	    .cpusubtype = cpusubtype,
@@ -121,7 +131,12 @@ void append_data(
 	fseek(mach, 0, SEEK_SET); 
     } else {
 	/*
-	 * The Mach-O file is already fat.  We need to add a new slice at the end.
+	 * Our Mach-O file is already fat.  We need to modify its fat header and
+         * add one fat_arch struct to the array.  The existing padding for the
+         * header must be adjusted to account for the new fat_arch.  We can then
+         * append the existing mach blocks, but padding must be added after those
+         * to ensure that the offset of the data slice at the end will be a multiple
+         * of 4K. 
 	 */
 	fseek(mach, 0, SEEK_SET);
 	fread(&fathead, sizeof(struct fat_header), 1, mach);
@@ -133,16 +148,20 @@ void append_data(
 	archs = calloc(fathead.nfat_arch + 1, sizeof(struct fat_arch));
 	fread(archs, sizeof(struct fat_arch), fathead.nfat_arch - 1, mach);
 	/*
-	 * Convert the fat arch structures to the host's endianness.
+	 * Convert the fat_arch structures to the host's endianness.
 	 */
 	swap_fat_arch(archs, fathead.nfat_arch - 1, 0);
 	fathead_size = sizeof(fathead) + fathead.nfat_arch*sizeof(struct fat_arch);
 	fathead_padding = archs[0].offset - fathead_size;
+        /*
+         * If we are very unlucky, adding the new fat_arch to the array may cause
+         * the fat header to expand beyond its current padded size.
+         */ 
 	if (fathead_padding < 0) {
-	    fathead_padding += 16384;
+	    fathead_padding += 0x4000;
 	    swap_fat_arch(archs, fathead.nfat_arch - 1, 0);
 	    for(int i = 0; i < fathead.nfat_arch - 1; i++) {
-		archs[i].offset += 16384;
+		archs[i].offset += 0x4000;
 	    }
 	    swap_fat_arch(archs, fathead.nfat_arch - 1, 0);
 	}
@@ -150,14 +169,15 @@ void append_data(
 	 * Seek to the start of the first mach header.
 	 */
 	fseek(mach, archs[0].offset, SEEK_SET);
+	data_offset = fathead_size + fathead_padding + mach_size - ftell(mach);
     }
     /*
-     * Fill in the fat arch for the new data slice.
+     * Fill in ia fat_arch for the new data slice.
      */
     struct fat_arch data_arch = {
 	.cputype = CPU_TYPE_ANY,
 	.cpusubtype = CPU_SUBTYPE_ANY,
-	.offset = fathead_size + fathead_padding + mach_size - ftell(mach),
+	.offset = data_offset,
 	.size = data_size,
 	.align = 0
     };
@@ -165,7 +185,7 @@ void append_data(
     /*
      * Copy the fat header and padding into the output file.  Apple says
      * that the fat_header and fat_arch structures must always be serialized
-     * serialized in bigendian order.
+     * in bigendian order.
      */
     int num_archs = fathead.nfat_arch;
     output = fopen(output_path, "w");
@@ -179,6 +199,7 @@ void append_data(
     fwrite(&fathead, sizeof(struct fat_header), 1, output);
     fwrite(archs, sizeof(struct fat_arch), num_archs, output);
     fwrite(&zero, 1, fathead_padding, output);
+    
     /*
      * Copy the Mach-O file.  Note: we left the file position at the start of
      * the first mach header.
@@ -187,6 +208,20 @@ void append_data(
 	int count;
 	count = fread(buffer, 1, 512, mach);
 	fwrite(buffer, count, 1, output);
+    }
+
+    /*
+     * Add padding to make sure that the data slice is aligned correctly.
+     */
+    fpos_t pos;
+    fgetpos(output, &pos);
+    if (pos % 0x4000) {
+	if (data_offset < pos) {
+	    fprintf(stderr, "Error computing offset to data slice. Aborting!\n");
+	    printf("data_offset: %x; pos: %llx\n", data_offset, pos);
+	    exit(-1);
+	}
+	fwrite(&zero, 1, data_offset - pos, output);
     }
     /*
      * Construct a Mach header for the data slice and write it to the output.
@@ -209,12 +244,6 @@ void append_data(
     }
     fclose(data);
     fclose(output);
-}
-
-
-static void usage() {
-  fprintf(stderr, "addzip <Mach-O file> <Zip File> <output>\n");
-  exit(0);
 }
 
 /*

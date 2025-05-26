@@ -43,6 +43,7 @@ typedef struct slice {
     int offset;
     bool reverse_bytes;
     bool is_64bit;
+    bool is_single_arch;
     FILE *mach_o_file;
     int header_size;
     void *header_data;
@@ -345,7 +346,10 @@ static void remove_command(Slice slice, int index)
     fread(tail, tail_size, 1, slice->mach_o_file);
     fseek(slice->mach_o_file, command->position, SEEK_SET);
     fwrite(tail, tail_size, 1, slice->mach_o_file);
-    fwrite(&zero, 1, command_size, slice->mach_o_file);
+    /* For fat binaries this preserves the offsets of the slices.*/
+    if (!slice->is_single_arch) {
+	fwrite(&zero, 1, command_size, slice->mach_o_file);
+    }
     free(tail);
     for (int i = index; i < slice->num_commands - 1; i++) {
 	slice->commands[i] = slice->commands[i + 1];
@@ -626,6 +630,7 @@ static op_result clear_rpaths(Slice slice, mach_o_command *command, char **args)
     return OP_CONTINUE;
 }
 
+#if 0
 static void unsign(Slice slice) {
     for (int i = 1; i < slice->num_commands; i++) {
 	if (slice->commands[i].lc.cmd == LC_CODE_SIGNATURE) {
@@ -633,14 +638,77 @@ static void unsign(Slice slice) {
 	}
     }
 }
+#endif
 
-	static op_result remove_signature(Slice slice, mach_o_command *command, char **args)
+/* 
+ * When Apple's codesign tool signs an executable, the signature data (which is
+ * much larger then the signature size reported by codesign -v -d) is placed at
+ * the end of the LINKEDIT segment, immediately following the SYMTAB, but
+ * pre-padded so its offset in the file is a multiple of 16 bytes.  The
+ * LINKEDIT segment descriptor is updated to include the signature data.  Apple
+ * expects the LINKEDIT segment to end at the end of the slice.
+ *
+ * To remove the signature we need to:
+ *    * remove the LC_CODE_SIGNATURE load command;
+ *    * truncate the file at the end of the SYMTAB;
+ *    * rewrite the segment descriptor to show the new, shorter length. 
+ */
+
+static void truncate_slice(Slice slice, unsigned long long end) {
+    if (slice->is_single_arch) {
+	ftruncate(fileno(slice->mach_o_file), end);
+    } else {
+	printf("Truncate the slice at byte %llu.\n", end);
+    }
+}
+
+static void fix_linkedit(Slice slice, unsigned long long end)
 {
-    if (command->lc.cmd != LC_CODE_SIGNATURE) {
+    for (int i = 0; i < slice->num_commands; i++) {
+	mach_o_command *command = slice->commands + i;
+	if (command->lc.cmd == LC_SEGMENT_64) {
+	    struct segment_command_64 *seg = (struct segment_command_64 *) command->data;
+	    if (strcmp(seg->segname, "__LINKEDIT") == 0) {
+		seg->filesize = end - seg->fileoff;
+		fseek(slice->mach_o_file, command->position, SEEK_SET);
+		fwrite((char *) seg, 1, command->lc.cmdsize, slice->mach_o_file);
+		break;
+	    }
+	} else if (command->lc.cmd == LC_SEGMENT) {
+	    struct segment_command_64 *seg = (struct segment_command_64 *) command->data;
+	    if (strcmp(seg->segname, "__LINKEDIT") == 0) {
+		seg->filesize = end - seg->fileoff;
+		fseek(slice->mach_o_file, command->position, SEEK_SET);
+		fwrite((char *) seg, 1, command->lc.cmdsize, slice->mach_o_file);
+		break;
+	    }
+	}
+    }
+    if (slice->verbose) {
+	printf("Set LINKEDIT end at %llu bytes.\n", end);
+    }
+}
+
+static op_result remove_signature(Slice slice, mach_o_command *command, char **args)
+{
+    static long string_end;
+    int command_id = command->lc.cmd & ~LC_REQ_DYLD;
+    if (command_id != LC_CODE_SIGNATURE) {
 	return OP_CONTINUE;
     }
-    struct lc_command *cmd = (struct lc_command *) command->data;
+    for (int i = 0; i < slice->num_commands; i++) {
+	mach_o_command *command = slice->commands + i;
+	if (command->lc.cmd == LC_SYMTAB) {
+	    struct symtab_command *tab = (struct symtab_command *)command->data;
+	    string_end = tab->stroff + tab->strsize;
+	    break;
+	}
+    }
+    fix_linkedit(slice, string_end);
+    // For fat binaries this means adjusting the fat_arch.size !
+    printf("Truncate file to string end.\n");
     remove_command(slice, command - slice->commands);
+    truncate_slice(slice, string_end);
     if (slice->verbose) {
 	printf("Removed code signature.\n");
     }
@@ -946,6 +1014,7 @@ int main(int argc, char **argv)
     mach_o = macho_init(mach_path, mode, verbose_flag);
     for (int i = 0; i < mach_o->num_archs; i++) {
 	slice = mach_o->slices[i];
+	slice->is_single_arch = mach_o->is_fat ? false : true;
 	if (action.id == INFO || mach_o->verbose) {
 	    show_slice_info(mach_o, i);
 	}
@@ -974,8 +1043,11 @@ int main(int argc, char **argv)
 	    }
 	}
 	if (action.unsign) {
-	    unsign(slice);
+	    printf("WARNING: this operation invalidated the signature.\n");
 	}
+    }
+    if (action.id == UNSIGN && mach_o->is_fat) {
+        printf("Repack slices now\n");
     }
     macho_destroy(mach_o);
     return 0;

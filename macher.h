@@ -24,7 +24,7 @@ char* load_command_names[] = {
 /*0x16*/  "LC_TWOLEVEL_HINTS",
 /*0x17*/  "LC_PREBIND_CKSUM",
 /*0x18*/  "LC_LOAD_WEAK_DYLIB",
-/*0x19*/  "LC_SEGMENT_",
+/*0x19*/  "LC_SEGMENT_64",
 /*0x1a*/  "LC_ROUTINES_",
 /*0x1b*/  "LC_UUID",
 /*0x1c*/  "LC_RPATH",

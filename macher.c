@@ -29,7 +29,7 @@
 #define MINOR(x) ((x >> 8) & 0xff)
 #define PATCH(x) (x & 0xff)
 
-static char zero = 0;
+static char *zero_block = NULL;
 
 typedef struct {
     bool reversed;
@@ -44,6 +44,7 @@ typedef struct slice {
     bool reverse_bytes;
     bool is_64bit;
     bool is_single_arch;
+    bool is_signed;
     FILE *mach_o_file;
     int header_size;
     void *header_data;
@@ -53,13 +54,14 @@ typedef struct slice {
     int command_block_size;
     unsigned long command_space;
     mach_o_command *commands;
+    uint64_t new_size;
 } *Slice;
 
 static Slice slice_init(FILE *mach_o_file, int offset, bool verbose);
 static void  slice_destroy(Slice slice);
 static void  swap_data_bytes(Slice slice, mach_o_command *command);
 static int   aligned_command_size(Slice slice, int min_size);
-static void  update_header(Slice slice);
+static void  update_mach_header(Slice slice);
 static void  compute_command_space(Slice slice);
 static bool  find_rpath(Slice slice, char *rpath);
 static void  remove_command(Slice slice, int index);
@@ -78,13 +80,11 @@ static void macho_destroy(MachO mach_o);
 static void show_slice_info(MachO mach_o, int index);
 
 /* Actions: */
+
 /*
- * If an action has a non-null action_op field then the action_op
- * will be called in a loop for each load command.  If the unsign
- * flag is set then the (now invalid) LC_CODE_SIGNATURE load command
- * will be removed after the loop terminates.  If an action_op
- * returns OP_BREAK then the loop is terminated when the action_op
- * returns. 
+ * If an action has a non-null action_op field then the action_op will be
+ * called in a loop for each load command. If an action_op returns OP_BREAK
+ * then the loop is terminated when the action_op returns.
  */
 
 typedef enum {OP_CONTINUE=0, OP_BREAK} op_result;
@@ -297,7 +297,7 @@ static void swap_data_bytes(Slice slice, mach_o_command *command)
     }
 }
 
-static void update_header(Slice slice)
+static void update_mach_header(Slice slice)
 {
     if (slice->is_64bit) {
 	struct mach_header_64 *header = (struct mach_header_64 *)
@@ -346,10 +346,6 @@ static void remove_command(Slice slice, int index)
     fread(tail, tail_size, 1, slice->mach_o_file);
     fseek(slice->mach_o_file, command->position, SEEK_SET);
     fwrite(tail, tail_size, 1, slice->mach_o_file);
-    /* For fat binaries this preserves the offsets of the slices.*/
-    if (!slice->is_single_arch) {
-	fwrite(&zero, 1, command_size, slice->mach_o_file);
-    }
     free(tail);
     for (int i = index; i < slice->num_commands - 1; i++) {
 	slice->commands[i] = slice->commands[i + 1];
@@ -358,7 +354,7 @@ static void remove_command(Slice slice, int index)
     slice->num_commands -= 1;
     slice->commands[slice->num_commands] = empty;
     slice->command_block_size -= command_size;
-    update_header(slice);
+    update_mach_header(slice);
 }
 
 static void compute_command_space(Slice slice)
@@ -595,7 +591,7 @@ static op_result add_rpath(Slice slice, mach_o_command *command, char **args)
     slice->command_space -= command_size;
     fseek(slice->mach_o_file, slice->offset + mc->position, SEEK_SET);
     int count = fwrite((char *) mc->data, 1, command_size, slice->mach_o_file);
-    update_header(slice);
+    update_mach_header(slice);
     return OP_BREAK;
 }
 
@@ -630,16 +626,6 @@ static op_result clear_rpaths(Slice slice, mach_o_command *command, char **args)
     return OP_CONTINUE;
 }
 
-#if 0
-static void unsign(Slice slice) {
-    for (int i = 1; i < slice->num_commands; i++) {
-	if (slice->commands[i].lc.cmd == LC_CODE_SIGNATURE) {
-	    remove_signature(slice, slice->commands + i, NULL);
-	}
-    }
-}
-#endif
-
 /* 
  * When Apple's codesign tool signs an executable, the signature data (which is
  * much larger then the signature size reported by codesign -v -d) is placed at
@@ -650,15 +636,15 @@ static void unsign(Slice slice) {
  *
  * To remove the signature we need to:
  *    * remove the LC_CODE_SIGNATURE load command;
- *    * truncate the file at the end of the SYMTAB;
+ *    * truncate the slice at the end of the SYMTAB;
  *    * rewrite the segment descriptor to show the new, shorter length. 
  */
 
-static void truncate_slice(Slice slice, unsigned long long end) {
+static void truncate_slice(Slice slice, uint64_t new_size) {
     if (slice->is_single_arch) {
-	ftruncate(fileno(slice->mach_o_file), end);
+	ftruncate(fileno(slice->mach_o_file), new_size);
     } else {
-	printf("Truncate the slice at byte %llu.\n", end);
+	slice->new_size = new_size;
     }
 }
 
@@ -691,11 +677,12 @@ static void fix_linkedit(Slice slice, unsigned long long end)
 
 static op_result remove_signature(Slice slice, mach_o_command *command, char **args)
 {
-    static long string_end;
+    static uint64_t string_end;
     int command_id = command->lc.cmd & ~LC_REQ_DYLD;
     if (command_id != LC_CODE_SIGNATURE) {
 	return OP_CONTINUE;
     }
+    slice->is_signed = true;
     for (int i = 0; i < slice->num_commands; i++) {
 	mach_o_command *command = slice->commands + i;
 	if (command->lc.cmd == LC_SYMTAB) {
@@ -705,8 +692,6 @@ static op_result remove_signature(Slice slice, mach_o_command *command, char **a
 	}
     }
     fix_linkedit(slice, string_end);
-    // For fat binaries this means adjusting the fat_arch.size !
-    printf("Truncate file to string end.\n");
     remove_command(slice, command - slice->commands);
     truncate_slice(slice, string_end);
     if (slice->verbose) {
@@ -750,7 +735,7 @@ static void change_dylib_path(Slice slice, mach_o_command *command, char *path)
     }
     slice->command_block_size += delta;
     slice->command_space -= delta;
-    update_header(slice);
+    update_mach_header(slice);
     free(command->data);
     command->data = NULL;
 }
@@ -799,8 +784,8 @@ static MachO macho_init(char *mach_o_path, char *mode, bool verbose){
     uint32_t magic;
     struct fat_header fathead;
     MachO mach_o = calloc(sizeof(struct macho), 1);
+    int max_align;
     struct stat st;
-
     stat(mach_o_path, &st);
     mach_o->mach_o_file = fopen(mach_o_path, mode);
     if (! mach_o->mach_o_file) {
@@ -823,6 +808,13 @@ static MachO macho_init(char *mach_o_path, char *mode, bool verbose){
 	fread(mach_o->archs, sizeof(struct fat_arch), mach_o->num_archs,
 	      mach_o->mach_o_file);
 	swap_fat_arch(mach_o->archs, mach_o->num_archs, 0);
+	for (int i; i < mach_o->num_archs; i++) {
+	    struct fat_arch *arch = mach_o->archs + i;
+	    if (arch->align > max_align) {
+		max_align = arch->align;
+	    }
+	}
+	zero_block = calloc(1 << max_align, sizeof(char));
     } else {
 	struct mach_header header;
 	fseek(mach_o->mach_o_file, 0, SEEK_SET);
@@ -888,6 +880,73 @@ static void macho_destroy(MachO mach_o){
 	free(mach_o->archs);
     }
     fclose(mach_o->mach_o_file);
+}
+
+static void repack_slices(MachO mach_o) {
+    /* Recall:
+     * The file starts with a fat header giving the number of slices.
+     * The fat header is followed by a list of fat_archs, one per slice.
+     * The remainder of the file consists of slices at the specified
+     * offsets with zero padding between the end of each slice and the
+     * start of the next to force correct alignment of the slices.
+     */
+    char **slice_buffers = calloc(sizeof(char*), mach_o->num_archs);
+    size_t count;
+    int padding;
+    for (int i = 0; i < mach_o->num_archs; i++) {
+	struct fat_arch *arch = mach_o->archs + i;
+	Slice slice = mach_o->slices[i];
+	if (slice->new_size == 0) {
+	    if (slice->is_signed == true) {
+		fprintf(stderr, "repack_slices: Slice %d has no new size.\n", i);
+		exit(-1);
+	    } else {
+		slice->new_size = arch->size;
+	    }
+	}
+	/* Allocate a buffer with the new (truncated) size. */
+	slice_buffers[i] = calloc(sizeof(char), slice->new_size);
+	if (slice_buffers[i] == NULL) {
+	    fprintf(stderr, "Out of memory\n");
+	    exit(-1);
+	}
+ 	/* Read the slice data into the truncated buffers */
+	fseek(mach_o->mach_o_file, arch->offset, SEEK_SET);
+	count = fread(slice_buffers[i], sizeof(char), arch->size,
+			  mach_o->mach_o_file);
+	if (count != arch->size) {
+	    fprintf(stderr, "Read failed.\n");
+	    exit(-1);
+	}
+	/* Update the fat_arch struct to show the new size and offset. */
+	arch->size = slice->new_size;
+	if (i > 0) {
+	    struct fat_arch *prev_arch = mach_o->archs + i - 1;
+	    int align = 1 << arch->align;
+	    unsigned offset = prev_arch->offset + prev_arch->size;
+	    offset = ((offset + align - 1) / align) * align;
+	}
+    }
+    /* The fat header is OK.  Seek to the start of the archs. */
+    fseek(mach_o->mach_o_file, sizeof(struct fat_header), SEEK_SET);
+    /* Write the fat_archs. */
+    swap_fat_arch(mach_o->archs, mach_o->num_archs, 0);
+    count = fwrite(mach_o->archs, sizeof(struct fat_arch),
+		   mach_o->num_archs, mach_o->mach_o_file);
+    swap_fat_arch(mach_o->archs, mach_o->num_archs, 0);
+    /* Write the slices, with mach header intact. */
+    for (int i = 0; i < mach_o->num_archs; i++) {
+	struct fat_arch *arch = mach_o->archs + i;
+	size_t pos = ftell(mach_o->mach_o_file);
+	size_t padding = arch->offset - pos;
+	count = fwrite(zero_block, 1, padding, mach_o->mach_o_file);
+	fwrite(slice_buffers[i], arch->size, 1, mach_o->mach_o_file);
+    }    
+    ftruncate(fileno(mach_o->mach_o_file), ftell(mach_o->mach_o_file));
+    for (int i = 0; i < mach_o->num_archs; i++) {
+	free(slice_buffers[i]);
+    }
+    free(slice_buffers);
 }
 
 static void usage()
@@ -1047,7 +1106,7 @@ int main(int argc, char **argv)
 	}
     }
     if (action.id == UNSIGN && mach_o->is_fat) {
-        printf("Repack slices now\n");
+        repack_slices(mach_o);
     }
     macho_destroy(mach_o);
     return 0;

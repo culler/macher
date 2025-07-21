@@ -1102,7 +1102,7 @@ int main(int argc, char **argv)
 	    }
 	}
 	if (action.unsign) {
-	    printf("WARNING: this operation invalidated the signature.\n");
+	    fprintf(stderr, "WARNING: this operation invalidated the signature.\n");
 	}
     }
     if (action.id == UNSIGN && mach_o->is_fat) {

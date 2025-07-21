@@ -1101,7 +1101,7 @@ int main(int argc, char **argv)
 		}
 	    }
 	}
-	if (action.unsign) {
+	if (action.unsign && slice->verbose) {
 	    fprintf(stderr, "WARNING: this operation invalidated the signature.\n");
 	}
     }

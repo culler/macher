@@ -8,7 +8,7 @@
  * See the file License.txt included with the source code distribution.
  *
  */
-#define MACHER_VERSION "1.8"
+#define MACHER_VERSION "1.9"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -469,6 +469,13 @@ static op_result print_command(Slice slice, mach_o_command *command, char **args
 		   (char *) command->data + dl->dylib.name.offset);
 	}
 	break;
+    case LC_LOAD_WEAK_DYLIB & ~LC_REQ_DYLD:
+	{
+	    struct dylib_command *dl = (struct dylib_command *)command->data;
+	    printf("    LC_LOAD_WEAK_DYLIB: %s\n",
+		   (char *) command->data + dl->dylib.name.offset);
+	}
+	break;	
     case LC_REEXPORT_DYLIB & ~LC_REQ_DYLD:
 	{
 	    struct dylib_command *dl = (struct dylib_command *)command->data;
